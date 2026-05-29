@@ -535,7 +535,7 @@ export class StrategyManager {
 
     const vrMomentum = vr > 1.05;
 
-    if (z < -1.5 && velocity > 0 && kelly > 0.02) {
+    if (z < -1.5 && velocity > 0 && kelly > 0.05) {
       const confidence = Math.min(0.92, 0.72 + kelly * 2 + Math.abs(z) * 0.04);
       return {
         action: 'BUY',
@@ -544,7 +544,7 @@ export class StrategyManager {
       };
     }
 
-    if (z > 1.5 && velocity < 0 && kelly > 0.02) {
+    if (z > 1.5 && velocity < 0 && kelly > 0.05) {
       const confidence = Math.min(0.91, 0.72 + kelly * 2 + Math.abs(z) * 0.04);
       return {
         action: 'SELL',
@@ -580,13 +580,44 @@ export class StrategyManager {
     averageEntryPrice: number = 0,
     tradeStats: { winRate: number; avgWin: number; avgLoss: number } = { winRate: 0.5, avgWin: 0.01, avgLoss: 0.008 },
     genes?: MathGenes,
-    gemmaSignal?: { action: 'BUY' | 'SELL' | 'HOLD'; confidence: number; reason: string } | null
+    gemmaSignal?: { action: 'BUY' | 'SELL' | 'HOLD'; confidence: number; reason: string } | null,
+    hmmRegime?: string
   ): StrategySignal {
     // Run all 4 strategies
     const oracle = this.getTemporalOracleSignal(indicators, [], priceHistory, genes);
     const statArb = this.getGridDcaSignal(indicators, hasActiveTrade, averageEntryPrice, priceHistory, genes);
     const kalmanHurst = this.getAiNeuralNetSignal(indicators, priceHistory, genes);
     const kelly = this.getConservativeSignal(indicators, priceHistory, tradeStats, genes);
+
+    // Modify strategy weighting based on the detected HMM market regime
+    // Trend strategies: Oracle, KalmanHurst
+    // Mean reversion strategies: Z-Score StatArb (Grid DCA)
+    let oracleWeight = 1.0;
+    let statArbWeight = 1.0;
+    let kalmanWeight = 1.0;
+    let kellyWeight = 1.0;
+
+    if (hmmRegime === 'TREND_BULL' || hmmRegime === 'TREND_BEAR') {
+      oracleWeight = 1.5;
+      kalmanWeight = 1.5;
+      statArbWeight = 0.5; // Reduce mean-reversion in trending markets
+    } else if (hmmRegime === 'RANGE') {
+      oracleWeight = 0.5; // Reduce trend-following in ranging markets
+      kalmanWeight = 0.5;
+      statArbWeight = 1.5;
+    }
+
+    // Apply weights to signals
+    oracle.confidence *= oracleWeight;
+    statArb.confidence *= statArbWeight;
+    kalmanHurst.confidence *= kalmanWeight;
+    kelly.confidence *= kellyWeight;
+
+    // Cap confidence at 0.99
+    oracle.confidence = Math.min(0.99, oracle.confidence);
+    statArb.confidence = Math.min(0.99, statArb.confidence);
+    kalmanHurst.confidence = Math.min(0.99, kalmanHurst.confidence);
+    kelly.confidence = Math.min(0.99, kelly.confidence);
 
     const votes = [oracle, statArb, kalmanHurst, kelly];
     const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion'];
@@ -616,14 +647,17 @@ export class StrategyManager {
     });
 
     // Minimum quorum: at least 1 strategy must vote + net score must exceed threshold
-    const MIN_QUORUM_SCORE = 0.70;
+    // Increased to 0.90 to ensure extremely high probability of profit per user request
+    const MIN_QUORUM_SCORE = 0.90;
+
+    const regimePrefix = hmmRegime ? `[Regime: ${hmmRegime}] ` : '';
 
     if (buyScore > sellScore && buyScore >= MIN_QUORUM_SCORE) {
       const avgConfidence = buyScore / Math.max(1, buyVoters.length);
       return {
         action: 'BUY',
         confidence: Math.min(0.98, avgConfidence),
-        reason: `🗳️ UNIFIED VOTE BUY [${buyVoters.join(', ')}] | SELL:[${sellVoters.join(', ') || 'none'}] | Score: ${buyScore.toFixed(2)} vs ${sellScore.toFixed(2)}`,
+        reason: `${regimePrefix}🗳️ UNIFIED VOTE BUY [${buyVoters.join(', ')}] | SELL:[${sellVoters.join(', ') || 'none'}] | Score: ${buyScore.toFixed(2)} vs ${sellScore.toFixed(2)}`,
       };
     }
 
@@ -632,14 +666,14 @@ export class StrategyManager {
       return {
         action: 'SELL',
         confidence: Math.min(0.98, avgConfidence),
-        reason: `🗳️ UNIFIED VOTE SELL [${sellVoters.join(', ')}] | BUY:[${buyVoters.join(', ') || 'none'}] | Score: ${sellScore.toFixed(2)} vs ${buyScore.toFixed(2)}`,
+        reason: `${regimePrefix}🗳️ UNIFIED VOTE SELL [${sellVoters.join(', ')}] | BUY:[${buyVoters.join(', ') || 'none'}] | Score: ${sellScore.toFixed(2)} vs ${buyScore.toFixed(2)}`,
       };
     }
 
     return {
       action: 'HOLD',
       confidence: 0.5,
-      reason: `🗳️ UNIFIED VOTE: No quorum. BUY(${buyScore.toFixed(2)}) vs SELL(${sellScore.toFixed(2)}). Abstaining: [${holdVoters.join(', ')}]`,
+      reason: `${regimePrefix}🗳️ UNIFIED VOTE: No quorum. BUY(${buyScore.toFixed(2)}) vs SELL(${sellScore.toFixed(2)}). Abstaining: [${holdVoters.join(', ')}]`,
     };
   }
 }

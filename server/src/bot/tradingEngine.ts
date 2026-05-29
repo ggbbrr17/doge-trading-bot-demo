@@ -5,6 +5,7 @@ import { CustomNeuralNetwork } from './aiModel';
 import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicators } from './strategies';
 import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
+import { hmmService, HMMResult } from './hmmService';
 
 export interface Trade {
   id: string;
@@ -69,6 +70,12 @@ export class TradingEngine {
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
   private stateFilePath: string;
+
+  private currentRegime: HMMResult | null = null;
+  private lastHmmFetchTime = 0;
+  private isHmmFetching = false;
+
+  private lastSummaryTime = 0;
 
   private activeIntervalId: NodeJS.Timeout | null = null;
   private onUpdateCallback: (() => void) | null = null;
@@ -346,6 +353,9 @@ export class TradingEngine {
             this.log(`AI Evolution cycle failed: ${err.message}`);
           });
         }
+        
+        // 5.2 Trigger periodic Telegram summary
+        await this.sendPeriodicSummary();
       }
 
       this.triggerUpdate();
@@ -413,13 +423,13 @@ export class TradingEngine {
         this.executeExit(trade, currentPrice, reason);
 
         // Send Telegram notification for automated exit
-        const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
-          `*Trade ID:* ${trade.id}\n` +
-          `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
-          `*Exit Price:* $${currentPrice.toFixed(5)}\n` +
-          `*PnL:* $${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)\n` +
-          `*Reason:* ${reason}`;
-        this.sendTelegramMessage(telegramMsg);
+        // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+        //   `*Trade ID:* ${trade.id}\n` +
+        //   `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
+        //   `*Exit Price:* $${currentPrice.toFixed(5)}\n` +
+        //   `*PnL:* $${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)\n` +
+        //   `*Reason:* ${reason}`;
+        // this.sendTelegramMessage(telegramMsg);
       }
     }
   }
@@ -427,6 +437,7 @@ export class TradingEngine {
   private async evaluateStrategy(indicators: TechnicalIndicators) {
     // Always trigger background Gemma 4 updates to ensure fresh qualitative/sentiment data is available
     this.triggerBackgroundGemmaFetch(indicators);
+    this.triggerBackgroundHmmFetch();
 
     const openTrades = this.trades.filter((t) => t.status === 'OPEN');
     const hasActiveTrade = openTrades.length > 0;
@@ -452,18 +463,33 @@ export class TradingEngine {
 
     let signal: StrategySignal = await this.getGemmaSignal(indicators);
 
+    // Call unified strategy directly instead of just Gemma
+    const unifiedSignal = this.strategyManager.getUnifiedSignal(
+      indicators,
+      this.pricesBuffer,
+      hasActiveTrade,
+      averageEntryPrice,
+      tradeStats,
+      genes,
+      signal, // pass Gemma as an extra vote
+      this.currentRegime?.current_regime
+    );
+
+    // Override local signal variable with the unified signal decision
+    signal = unifiedSignal;
+
     // Process Signal Action
     if (signal.action === 'BUY' && !hasActiveTrade) {
       this.log(`AI Unified strategy generated BUY signal! Reason: ${signal.reason}`);
       await this.executeEntry('BUY', indicators.currentPrice, signal.reason, signal.targetSL, signal.targetTP);
 
       // Send Telegram notification for entry
-      const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
-        `*Trade ID:* ${this.trades[this.trades.length - 1]?.id || 'N/A'}\n` +
-        `*Action:* BUY (Entry)\n` +
-        `*Entry Price:* $${indicators.currentPrice.toFixed(5)}\n` +
-        `*Reason:* ${signal.reason}`;
-      this.sendTelegramMessage(telegramMsg);
+      // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+      //   `*Trade ID:* ${this.trades[this.trades.length - 1]?.id || 'N/A'}\n` +
+      //   `*Action:* BUY (Entry)\n` +
+      //   `*Entry Price:* $${indicators.currentPrice.toFixed(5)}\n` +
+      //   `*Reason:* ${signal.reason}`;
+      // this.sendTelegramMessage(telegramMsg);
     } else if (signal.action === 'SELL' && hasActiveTrade) {
       this.log(`AI Unified strategy generated SELL signal! Reason: ${signal.reason}`);
       for (const openTrade of openTrades) {
@@ -475,12 +501,12 @@ export class TradingEngine {
       await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`, signal.targetSL, signal.targetTP);
 
       // Send Telegram notification for DCA entry
-      const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
-        `*Trade ID:* ${this.trades[this.trades.length - 1]?.id || 'N/A'}\n` +
-        `*Action:* BUY (DCA Entry)\n` +
-        `*Entry Price:* $${indicators.currentPrice.toFixed(5)}\n` +
-        `*Reason:* DCA Safety Order: ${signal.reason}`;
-      this.sendTelegramMessage(telegramMsg);
+      // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+      //   `*Trade ID:* ${this.trades[this.trades.length - 1]?.id || 'N/A'}\n` +
+      //   `*Action:* BUY (DCA Entry)\n` +
+      //   `*Entry Price:* $${indicators.currentPrice.toFixed(5)}\n` +
+      //   `*Reason:* DCA Safety Order: ${signal.reason}`;
+      // this.sendTelegramMessage(telegramMsg);
     }
   }
 
@@ -512,6 +538,30 @@ export class TradingEngine {
       }).catch((err) => {
         this.isGemmaFetching = false;
         this.log(`🤖 [Gemma 4] Signal fetch failed: ${err.message}`);
+      });
+    }
+  }
+
+  // Trigger background HMM analysis
+  private triggerBackgroundHmmFetch() {
+    const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+    const now = Date.now();
+
+    if (!this.isHmmFetching && now - this.lastHmmFetchTime > CACHE_TTL_MS) {
+      this.isHmmFetching = true;
+      this.log('🤖 [HMM] Analyzing mathematical market regimes using Hidden Markov Models...');
+      
+      const volumes = this.candles.map(c => c.volume);
+      
+      hmmService.getCurrentRegime(this.pricesBuffer, volumes).then((regime) => {
+        this.currentRegime = regime;
+        this.lastHmmFetchTime = Date.now();
+        this.isHmmFetching = false;
+        this.log(`🤖 [HMM] Market Regime Detected: ${regime.current_regime}`);
+        this.triggerUpdate();
+      }).catch((err) => {
+        this.isHmmFetching = false;
+        this.log(`🤖 [HMM] Failed to detect regime: ${err.message}`);
       });
     }
   }
@@ -645,15 +695,15 @@ export class TradingEngine {
         this.log(`Binance exit order filled. PnL: $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)`);
 
         // Enviar notificación de Telegram para salida REAL
-        const telegramMsg = `*DOGE Bot Notification (REAL)* 🤖\n\n` +
-          `*Trade ID:* ${trade.id}\n` +
-          `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
-          `*Exit Price:* $${fillPrice.toFixed(5)}\n` +
-          `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
-          `*Reason:* ${reason}`;
-
+        // const telegramMsg = `*DOGE Bot Notification (REAL)* 🤖\n\n` +
+        //   `*Trade ID:* ${trade.id}\n` +
+        //   `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
+        //   `*Exit Price:* $${fillPrice.toFixed(5)}\n` +
+        //   `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
+        //   `*Reason:* ${reason}`;
+        //
         // No bloqueamos el hilo principal, enviamos en segundo plano
-        this.sendTelegramMessage(telegramMsg);
+        // this.sendTelegramMessage(telegramMsg);
 
         // Train Neural Network using trade feedback!
         this.trainModelOnExit(trade);
@@ -687,13 +737,13 @@ export class TradingEngine {
 
       // Train Neural Network using trade feedback!
       // Send Telegram notification for exit
-      const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
-        `*Trade ID:* ${trade.id}\n` +
-        `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
-        `*Exit Price:* $${finalExitPrice.toFixed(5)}\n` +
-        `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
-        `*Reason:* ${reason}`;
-      this.sendTelegramMessage(telegramMsg);
+      // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+      //   `*Trade ID:* ${trade.id}\n` +
+      //   `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
+      //   `*Exit Price:* $${finalExitPrice.toFixed(5)}\n` +
+      //   `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
+      //   `*Reason:* ${reason}`;
+      // this.sendTelegramMessage(telegramMsg);
 
       this.trainModelOnExit(trade);
 
@@ -821,6 +871,7 @@ export class TradingEngine {
         bollinger: indicators.bollinger,
         currentPrice,
       },
+      hmmRegime: this.currentRegime,
       neuralNetwork: this.neuralNet.getWeightsAndNeurons(),
       evolution: this.evolutionEngine.getStats(),
     };
@@ -863,5 +914,66 @@ export class TradingEngine {
       this.log(`Telegram notification error: ${error.message}`);
       if (throwError) throw error;
     }
+  }
+
+  private async sendPeriodicSummary() {
+    const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
+    const now = Date.now();
+
+    if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS) {
+      return; // Not time yet
+    }
+
+    if (!this.config.telegramBotToken || !this.config.telegramChatId) {
+      return; // Telegram not configured
+    }
+
+    this.lastSummaryTime = now;
+    this.log('📊 Generando reporte periódico de 3 horas para Telegram...');
+
+    // 1. Open Trades
+    const openTrades = this.trades.filter(t => t.status === 'OPEN');
+    let openSummary = '';
+    if (openTrades.length === 0) {
+      openSummary = 'Ninguna operación abierta.';
+    } else {
+      openSummary = openTrades.map(t => {
+        const pnlStr = (t.pnlPercent || 0) >= 0 ? `+${(t.pnlPercent || 0).toFixed(2)}%` : `${(t.pnlPercent || 0).toFixed(2)}%`;
+        const emoji = (t.pnlPercent || 0) >= 0 ? '🟢' : '🔴';
+        return `• ${t.side} $${t.amount.toFixed(2)} | PnL: ${emoji} ${pnlStr}`;
+      }).join('\n');
+    }
+
+    // 2. Closed Trades in the last 3 hours
+    const threeHoursAgo = now - SUMMARY_INTERVAL_MS;
+    const recentClosed = this.trades.filter(t => t.status === 'CLOSED' && (t.exitTimestamp || 0) > threeHoursAgo);
+    let closedSummary = '';
+    let recentNetProfit = 0;
+    if (recentClosed.length === 0) {
+      closedSummary = 'Ninguna operación cerrada en las últimas 3 horas.';
+    } else {
+      recentNetProfit = recentClosed.reduce((sum, t) => sum + (t.pnl || 0), 0);
+      const winCount = recentClosed.filter(t => (t.pnl || 0) > 0).length;
+      const lossCount = recentClosed.length - winCount;
+      const emoji = recentNetProfit >= 0 ? '🤑' : '📉';
+      closedSummary = `Se cerraron ${recentClosed.length} operaciones (${winCount}W / ${lossCount}L).\n` +
+                      `PnL del periodo: ${emoji} $${recentNetProfit.toFixed(2)}`;
+    }
+
+    // 3. Market Summary from Gemma
+    const marketNews = await this.gemmaService.generateMarketSummary();
+
+    // 4. HMM Regime
+    const regimeStr = this.currentRegime ? this.currentRegime.current_regime : 'Desconocido';
+
+    // Construct the final message
+    const message = `*DOGE Bot | Reporte de 3 Horas* 🕒\n\n` +
+                    `*1️⃣ Operaciones Abiertas (${openTrades.length})*\n${openSummary}\n\n` +
+                    `*2️⃣ Actividad Reciente*\n${closedSummary}\n\n` +
+                    `*3️⃣ Régimen de Mercado (HMM)*\n🧠 Detectado: \`${regimeStr}\`\n\n` +
+                    `*4️⃣ Visión del Mercado & Noticias*\n${marketNews}`;
+
+    await this.sendTelegramMessage(message);
+    this.log('✅ Reporte de 3 horas enviado a Telegram exitosamente.');
   }
 }

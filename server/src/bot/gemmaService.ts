@@ -220,4 +220,32 @@ Your response must be a single, raw JSON object (with no markdown wrappers, no b
       };
     }
   }
+
+  async generateMarketSummary(): Promise<string> {
+    if (!this.ai) {
+      return 'Resumen de mercado no disponible (Falta GEMINI_API_KEY).';
+    }
+
+    try {
+      const prompt = `
+Actúa como un experto analista financiero de criptomonedas.
+Busca las últimas noticias importantes de hoy sobre Bitcoin (BTC) y Dogecoin (DOGE) usando Google Search.
+Escribe un resumen muy breve y al grano (máximo 2 párrafos) en español sobre el estado actual del mercado macro y las noticias más relevantes que puedan afectar a estas monedas.
+El texto debe ser ideal para enviarse como mensaje de Telegram, puedes usar algunos emojis como 📈, 📉, 🚀, ⚠️.
+No uses formato markdown complejo, solo texto simple y negritas. No devuelvas JSON.
+`;
+      const response = await this.ai.models.generateContent({
+        model: this.modelName,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      return response.text || 'Sin noticias relevantes por el momento.';
+    } catch (error: any) {
+      console.error(`[GemmaService] Error fetching market summary: ${error.message}`);
+      return 'No se pudo generar el resumen de noticias debido a un error de conexión con la IA.';
+    }
+  }
 }
