@@ -113,7 +113,7 @@ export default function App() {
     marketType: 'SPOT', // Default to SPOT
     leverage: 5, // Default leverage for futures
     telegramBotToken: '7575795641:AAHdzUClOsiwyqp4mZorLEyvDqeoYIh2LKA',
-    telegramChatId: ''
+    telegramChatId: '7543101442'
   });
 
   const [stats, setStats] = useState<BotStats>({

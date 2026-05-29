@@ -88,7 +88,7 @@ export class TradingEngine {
       marketType: 'SPOT',
       leverage: 5,
       telegramBotToken: '7575795641:AAHdzUClOsiwyqp4mZorLEyvDqeoYIh2LKA',
-      telegramChatId: '',
+      telegramChatId: '7543101442',
     };
 
     this.stats = {
@@ -320,10 +320,14 @@ export class TradingEngine {
         this.tickCount++;
         if (this.tickCount % 50 === 0) {
           this.log(`AI Evolutionary cycle triggered. Mutating and backtesting quantitative timing formulas...`);
-          const didEvolve = this.evolutionEngine.evolve(this.pricesBuffer, this.trades);
-          if (didEvolve) {
-            this.log(`🧬 SUCCESS: AI Evolved a superior mathematical formula: ${this.evolutionEngine.getStats().bestFormulaExpression}`);
-          }
+          this.evolutionEngine.evolve(this.pricesBuffer, this.trades).then((didEvolve) => {
+            if (didEvolve) {
+              this.log(`🧬 SUCCESS: AI Evolved a superior mathematical formula: ${this.evolutionEngine.getStats().bestFormulaExpression}`);
+              this.triggerUpdate();
+            }
+          }).catch((err) => {
+            this.log(`AI Evolution cycle failed: ${err.message}`);
+          });
         }
       }
 
@@ -673,10 +677,14 @@ export class TradingEngine {
     // If trade resulted in a loss, trigger Genetic Algorithm mathematical evolution!
     if (trade.pnl <= 0) {
       this.log(`Underperforming closed position [${trade.id}] detected. Initiating Genetic Mathematical Evolution Epoch...`);
-      const didEvolve = this.evolutionEngine.evolve(this.pricesBuffer, this.trades);
-      if (didEvolve) {
-        this.log(`🧬 EVOLVED: AI evolved a superior chromosome. New formula: ${this.evolutionEngine.getStats().bestFormulaExpression}`);
-      }
+      this.evolutionEngine.evolve(this.pricesBuffer, this.trades).then((didEvolve) => {
+        if (didEvolve) {
+          this.log(`🧬 EVOLVED: AI evolved a superior chromosome. New formula: ${this.evolutionEngine.getStats().bestFormulaExpression}`);
+          this.triggerUpdate();
+        }
+      }).catch((err) => {
+        this.log(`AI Evolution cycle failed: ${err.message}`);
+      });
     }
   }
 

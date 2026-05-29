@@ -1,3 +1,5 @@
+import * as https from 'https';
+
 export interface MathGenes {
   binomialThreshold: number;     // e.g., 0.70 (above which uptrend confirmed)
   zScoreEntry: number;           // e.g., -2.0 (below which buy in stat arb)
@@ -9,6 +11,7 @@ export interface MathGenes {
   kellyFraction: number;         // e.g., 0.25 (fractional Kelly sizing factor)
   momentumLookback: number;      // e.g., 20 (ticks for J-T momentum score)
 }
+
 
 export interface EvolutionStats {
   generation: number;
@@ -147,27 +150,137 @@ export class EvolutionEngine {
     return formulas[this.generation % formulas.length];
   }
 
+  private geminiApiKey = 'AIzaSyCD6RNHN1FJ-OQxtasRTgJ2dOzUvRLrhnk';
+
+  private async callGemini(prompt: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const data = JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: prompt }
+            ]
+          }
+        ],
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const options = {
+        hostname: 'generativelanguage.googleapis.com',
+        port: 443,
+        path: `/v1beta/models/gemini-2.5-flash:generateContent?key=${this.geminiApiKey}`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+        },
+      };
+
+      const req = https.request(options, (res) => {
+        let body = '';
+        res.on('data', (chunk) => body += chunk);
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(body);
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}: ${body}`));
+          }
+        });
+      });
+
+      req.on('error', (e) => reject(e));
+      req.write(data);
+      req.end();
+    });
+  }
+
   /**
    * EVOLVE CYCLE
    * Triggered when underperformance is detected. Generates candidate mutations,
    * runs backtest on price history, and selects the absolute best chromosome.
    */
-  evolve(priceHistory: number[], tradeResults: any[]): boolean {
+  async evolve(priceHistory: number[], tradeResults: any[]): Promise<boolean> {
     if (priceHistory.length < 50) return false;
 
     this.generation++;
     this.lastEvolvedAt = Date.now();
-    this.log(`AI Gen ${this.generation} activated: analyzing underperforming vectors from latest closed trades.`);
+    this.log(`AI Gen ${this.generation} activated: analyzing underperforming vectors.`);
 
-    // 1. Evaluate current active genes fitness
+    // 1. Try Gemini API Optimization first
+    try {
+      this.log(`Reaching out to Google Gemma/Gemini 4 (gemini-2.5-flash) for optimization...`);
+      const closedTrades = tradeResults.filter((t: any) => t.status === 'CLOSED');
+      const winningTrades = closedTrades.filter((t: any) => (t.pnl || 0) > 0);
+      const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 50;
+      const netProfit = closedTrades.reduce((sum: number, t: any) => sum + (t.pnl || 0), 0);
+
+      const prompt = `You are a Quantitative Trading AI Expert. Your goal is to optimize the mathematical parameters (genes) for a Dogecoin trading bot.
+Current parameters (genes):
+${JSON.stringify(this.activeGenes, null, 2)}
+
+Recent market statistics:
+- Total closed trades: ${closedTrades.length}
+- Win rate: ${winRate.toFixed(1)}%
+- Net profit/loss: $${netProfit.toFixed(2)} USDT
+
+Recent price history (last 50 closing prices):
+${JSON.stringify(priceHistory.slice(-50))}
+
+Please output a JSON object containing the optimized values for each parameter. The output format MUST be exactly:
+{
+  "binomialThreshold": number (between 0.55 and 0.95),
+  "zScoreEntry": number (between -3.5 and -1.0),
+  "zScoreExit": number (between 0.5 and 2.5),
+  "hurstTrending": number (between 0.50 and 0.75),
+  "hurstReversion": number (between 0.25 and 0.49),
+  "kalmanNoiseRatio": number (between 0.0005 and 0.05),
+  "varianceRatioLongPeriod": number (integer between 5 and 25),
+  "kellyFraction": number (between 0.05 and 0.50),
+  "momentumLookback": number (integer between 5 and 40),
+  "bestFormulaExpression": "string (representing the evolved mathematical formula expression using latex or quant notation, e.g. Ω(t) = Kelly * Z_score - Kalman_noise)",
+  "logMessage": "string (brief summary of why you chose these parameters, max 100 characters)"
+}
+
+Do not include any explanation outside the JSON format. Respond ONLY with valid JSON.`;
+
+      const responseBody = await this.callGemini(prompt);
+      const parsed = JSON.parse(responseBody);
+      const text = parsed.candidates[0].content.parts[0].text.trim();
+      const responseJson = JSON.parse(text);
+
+      // Validate inputs from Gemini
+      if (responseJson && typeof responseJson.binomialThreshold === 'number') {
+        this.activeGenes = {
+          binomialThreshold: Number(responseJson.binomialThreshold),
+          zScoreEntry: Number(responseJson.zScoreEntry),
+          zScoreExit: Number(responseJson.zScoreExit),
+          hurstTrending: Number(responseJson.hurstTrending),
+          hurstReversion: Number(responseJson.hurstReversion),
+          kalmanNoiseRatio: Number(responseJson.kalmanNoiseRatio),
+          varianceRatioLongPeriod: Math.round(Number(responseJson.varianceRatioLongPeriod)),
+          kellyFraction: Number(responseJson.kellyFraction),
+          momentumLookback: Math.round(Number(responseJson.momentumLookback))
+        };
+        this.bestFormulaExpression = responseJson.bestFormulaExpression || this.bestFormulaExpression;
+        this.fitnessScore = this.evaluateFitness(this.activeGenes, priceHistory);
+        this.log(`🔮 GEMINI OPTIMIZER SUCCESS: ${responseJson.logMessage || 'Parameters successfully evolved.'}`);
+        this.log(`New evolved formula expression: "${this.bestFormulaExpression}"`);
+        this.log(`Updated parameters: Z_entry=${this.activeGenes.zScoreEntry.toFixed(2)}, Hurst_trend=${this.activeGenes.hurstTrending.toFixed(2)}, Kelly_frac=${this.activeGenes.kellyFraction.toFixed(2)}.`);
+        return true;
+      }
+    } catch (e: any) {
+      this.log(`Gemini optimization failed (${e.message}). Falling back to local Genetic Engine...`);
+    }
+
+    // 2. Fallback to Local Genetic Algorithm
     const currentFitness = this.evaluateFitness(this.activeGenes, priceHistory);
     this.log(`Current active mathematical formula fitness: ${currentFitness.toFixed(2)} points.`);
 
-    // 2. Generate a population of mutated chromosomes (offspring)
     const populationSize = 15;
     let bestCandidate = this.activeGenes;
     let bestFitness = currentFitness;
-    let mutatedCount = 0;
 
     for (let i = 0; i < populationSize; i++) {
       const candidate = this.mutate(this.activeGenes, 0.25);
@@ -176,18 +289,16 @@ export class EvolutionEngine {
       if (candidateFitness > bestFitness) {
         bestFitness = candidateFitness;
         bestCandidate = candidate;
-        mutatedCount++;
       }
     }
 
-    // 3. Selection
     if (bestFitness > currentFitness) {
       const improvement = bestFitness - currentFitness;
       this.activeGenes = bestCandidate;
       this.fitnessScore = bestFitness;
       this.bestFormulaExpression = this.generateEvolvedFormula(bestCandidate);
 
-      this.log(`🧬 EVOLUTION SUCCESS! Generation ${this.generation} evolved a superior chromosome.`);
+      this.log(`🧬 GA FALLBACK SUCCESS! Generation ${this.generation} evolved a superior chromosome.`);
       this.log(`Improvement delta: +${improvement.toFixed(2)} backtest fitness units.`);
       this.log(`New evolved formula expression: "${this.bestFormulaExpression}"`);
       this.log(`Updated parameters: Z_entry=${bestCandidate.zScoreEntry.toFixed(2)}, Hurst_trend=${bestCandidate.hurstTrending.toFixed(2)}, Kelly_frac=${bestCandidate.kellyFraction.toFixed(2)}.`);
@@ -198,4 +309,5 @@ export class EvolutionEngine {
       return false;
     }
   }
+
 }
