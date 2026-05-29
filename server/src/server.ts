@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as WebSocket from 'ws';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
+import * as path from 'path';
 import { TradingEngine } from './bot/tradingEngine';
 import { saveTradeToHistory } from './persistence';
 
@@ -11,6 +12,10 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Serve static files from the React client app
+const clientDistPath = path.join(__dirname, '../../client/dist');
+app.use(express.static(clientDistPath));
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -78,6 +83,11 @@ app.post('/api/config', (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Fallback to serve index.html for SPA routing
+app.get('*', (req: Request, res: Response) => {
+  res.sendFile(path.join(clientDistPath, 'index.html'));
 });
 
 // Start ticker processing immediately if config shows it was running previously
