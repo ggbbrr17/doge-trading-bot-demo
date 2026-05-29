@@ -392,8 +392,8 @@ export default function App() {
     // Extrema calculations
     const highPrices = candles.map(c => c.high);
     const lowPrices = candles.map(c => c.low);
-    const maxPrice = Math.max(...highPrices, indicators.bollinger.upper) * 1.002;
-    const minPrice = Math.min(...lowPrices, indicators.bollinger.lower) * 0.998;
+    const maxPrice = Math.max(...highPrices, indicators.bollinger.upper) * 1.001;
+    const minPrice = Math.min(...lowPrices, indicators.bollinger.lower) * 0.999;
     const priceRange = maxPrice - minPrice;
 
     // Helper to map values to coordinates
@@ -445,8 +445,8 @@ export default function App() {
         )}
 
         {/* EMA curves */}
-        {ema50Points && <path d={ema50Points} fill="none" stroke="#ff007f" strokeWidth="1.2" opacity="0.6" strokeDasharray="2,2" />}
-        {ema20Points && <path d={ema20Points} fill="none" stroke="#00e5ff" strokeWidth="1.5" opacity="0.8" />}
+        {ema50Points && <path d={ema50Points} fill="none" stroke="#ff007f" strokeWidth="1.5" opacity="0.4" strokeDasharray="4,2" />}
+        {ema20Points && <path d={ema20Points} fill="none" stroke="#00e5ff" strokeWidth="2" opacity="0.9" style={{ filter: 'drop-shadow(0 0 3px rgba(0, 229, 255, 0.5))' }} />}
 
         {/* Candlesticks */}
         {candles.map((candle, idx) => {
@@ -457,8 +457,8 @@ export default function App() {
           const yLow = getY(candle.low);
 
           const isBullish = candle.close >= candle.open;
-          const bodyColor = isBullish ? '#00ff88' : '#ff3366';
-          const bodyWidth = Math.max(2, chartWidth / candles.length - 2);
+          const bodyColor = isBullish ? '#00ffa3' : '#ff2e63';
+          const bodyWidth = Math.max(3, chartWidth / candles.length - 3);
 
           return (
             <g key={idx} opacity={idx === candles.length - 1 ? 1 : 0.85}>
@@ -471,6 +471,7 @@ export default function App() {
                 width={bodyWidth}
                 height={Math.max(1.5, Math.abs(yOpen - yClose))}
                 fill={bodyColor}
+                style={{ filter: isBullish ? 'drop-shadow(0 0 2px rgba(0, 255, 163, 0.3))' : 'none' }}
                 rx="0.5"
               />
             </g>
@@ -552,7 +553,7 @@ export default function App() {
                   y1={getInputY(i)}
                   x2={hiddenX}
                   y2={getHiddenY(h)}
-                  stroke={strokeColor}
+                  stroke={isFiring ? '#fff' : strokeColor}
                   strokeWidth={strokeWidth}
                   opacity={opacity}
                 />
@@ -604,7 +605,7 @@ export default function App() {
                 fill="#0f0f1b"
                 stroke={val > 0.2 ? '#00e5ff' : val < -0.2 ? '#ff007f' : '#334155'}
                 strokeWidth="2"
-                style={{ filter: val > 0.2 ? 'drop-shadow(0 0 6px rgba(0, 229, 255, 0.4))' : 'none' }}
+                style={{ filter: val > 0.2 ? 'drop-shadow(0 0 8px rgba(0, 229, 255, 0.6))' : 'none' }}
               />
               <text x={inputX} y={getInputY(i) + 4} fill="#fff" fontSize="9" fontWeight="bold" textAnchor="middle">
                 {val.toFixed(1)}
@@ -668,13 +669,17 @@ export default function App() {
   const closedTrades = trades.filter(t => t.status === 'CLOSED');
 
   return (
-    <div className="min-h-screen relative z-10 flex flex-col">
+    <div className="min-h-screen relative z-10 flex flex-col bg-[#050508] text-slate-200 overflow-x-hidden">
+      {/* Global HUD Scanning Line effect */}
+      <div className="fixed inset-0 pointer-events-none z-50 opacity-[0.03] scanline" />
+      <div className="fixed inset-0 pointer-events-none z-0 bg-[radial-gradient(#1e293b_0.5px,transparent_0.5px)] [background-size:24px_24px] opacity-20" />
+
       {/* Top Ambient Light Gradients */}
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute top-0 right-1/4 w-96 h-96 bg-pink-500/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="fixed top-[-10%] left-1/4 w-[500px] h-[500px] bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+      <div className="fixed top-[-10%] right-1/4 w-[500px] h-[500px] bg-pink-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" style={{ animationDelay: '2s' }} />
 
       {/* HEADER NAVBAR */}
-      <header className="fixed top-0 left-0 right-0 border-b border-white/10 bg-black/60 backdrop-filter backdrop-blur-xl z-50 px-6 py-3">
+      <header className="fixed top-0 left-0 right-0 border-b border-white/10 bg-black/40 backdrop-filter backdrop-blur-2xl z-50 px-6 py-3 shadow-2xl">
         <div className="max-w-[1600px] mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-gradient-to-tr from-cyan-500/20 to-pink-500/20 p-2 rounded-xl flex items-center justify-center border border-white/10">
@@ -691,9 +696,9 @@ export default function App() {
           {/* Real-time Ticker price display */}
           <div className="flex items-center gap-6">
             <div className="flex flex-col items-end">
-              <span className="text-xs text-slate-500 uppercase tracking-widest">Live DOGE/USDT</span>
-              <span className={`text-2xl font-mono font-bold tracking-tight transition-all duration-300 ${priceDirection === 'UP' ? 'text-neon-green price-flash-up' :
-                priceDirection === 'DOWN' ? 'text-neon-red price-flash-down' : 'text-white'
+              <span className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold">Market Vector</span>
+              <span className={`text-2xl font-mono font-bold tracking-tighter transition-all duration-300 ${priceDirection === 'UP' ? 'text-neon-green [text-shadow:0_0_10px_rgba(0,255,136,0.5)]' :
+                priceDirection === 'DOWN' ? 'text-neon-red [text-shadow:0_0_10px_rgba(255,51,102,0.5)]' : 'text-white'
                 }`}>
                 ${indicators.currentPrice.toFixed(5)}
               </span>
@@ -746,8 +751,8 @@ export default function App() {
       <main className="max-w-[1600px] w-full mx-auto px-6 pt-24 pb-20 flex-grow">
 
         {/* STATS MATRIX SECTION */}
-        <section className="grid grid-cols-5 gap-6">
-          <div className="cyber-card cyan-glow-border flex flex-col justify-between min-h-[110px]">
+        <section className="grid grid-cols-5 gap-6 mb-8">
+          <div className="cyber-card cyan-glow-border flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
             <div className="flex justify-between items-center text-slate-400">
               <span className="text-xs uppercase tracking-wider font-semibold">Net Balance Portfolio</span>
               <DollarSign size={16} className="text-neon-cyan" />
@@ -762,7 +767,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="cyber-card pink-glow-border flex flex-col justify-between min-h-[110px]">
+          <div className="cyber-card pink-glow-border flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
             <div className="flex justify-between items-center text-slate-400">
               <span className="text-xs uppercase tracking-wider font-semibold">Net Profit (USDT)</span>
               <TrendingUp size={16} className="text-neon-pink" />
@@ -775,7 +780,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="cyber-card flex flex-col justify-between min-h-[110px]">
+          <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
             <div className="flex justify-between items-center text-slate-400">
               <span className="text-xs uppercase tracking-wider font-semibold">Bot Win Rate</span>
               <Award size={16} className="text-neon-yellow" />
@@ -789,7 +794,7 @@ export default function App() {
                   </span>
                 )}
                 {config.strategy === 'GEMMA_4' && (
-                  <span className="text-[9px] text-purple-300 border border-purple-500/40 px-1 py-0.5 rounded font-mono bg-purple-950/30 flex items-center gap-0.5" style={{boxShadow:'0 0 8px rgba(168,85,247,0.3)'}}>
+                  <span className="text-[9px] text-purple-300 border border-purple-500/40 px-1 py-0.5 rounded font-mono bg-purple-950/30 flex items-center gap-0.5" style={{ boxShadow: '0 0 8px rgba(168,85,247,0.3)' }}>
                     🤖 GEMMA 4
                   </span>
                 )}
@@ -800,7 +805,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="cyber-card flex flex-col justify-between min-h-[110px]">
+          <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
             <div className="flex justify-between items-center text-slate-400">
               <span className="text-xs uppercase tracking-wider font-semibold">Profit Factor</span>
               <Percent size={16} className="text-slate-400" />
@@ -813,7 +818,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="cyber-card flex flex-col justify-between min-h-[110px]">
+          <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
             <div className="flex justify-between items-center text-slate-400">
               <span className="text-xs uppercase tracking-wider font-semibold">Active Orders Vector</span>
               <Activity size={16} className="text-neon-green" />
@@ -833,7 +838,7 @@ export default function App() {
         <section className="dashboard-grid">
 
           {/* COLUMN 1: CHART PANEL */}
-          <div className="cyber-card flex flex-col gap-4">
+          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
             <div className="flex items-center justify-between border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Activity size={16} className="text-neon-cyan animate-pulse" /> Real-time Price Grid & Technical Overlay
@@ -850,7 +855,7 @@ export default function App() {
           </div>
 
           {/* COLUMN 2: NEURAL NETWORK VISUALIZER */}
-          <div className="cyber-card flex flex-col gap-4">
+          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
             <div className="flex items-center justify-between border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Cpu size={16} className="text-neon-pink" /> AI Neural Core Weight & Synapses Visualizer
@@ -865,7 +870,7 @@ export default function App() {
           </div>
 
           {/* COLUMN 1: CONTROL PANEL & API */}
-          <div className="cyber-card flex flex-col gap-4">
+          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
             <div className="border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Settings size={16} className="text-neon-cyan" /> Autonomous strategy control matrix
@@ -1063,7 +1068,7 @@ export default function App() {
           </div>
 
           {/* COLUMN 2: RETRO CONSOLE LOGS TERMINAL */}
-          <div className="cyber-card flex flex-col gap-4">
+          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
             <div className="flex items-center justify-between border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Terminal size={16} className="text-neon-cyan" /> Neural Decision Stream & Execution Log
@@ -1151,7 +1156,7 @@ export default function App() {
                 <div className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold flex items-center gap-1.5">
                   <Activity size={12} className="text-neon-pink" /> Walk-Forward Backtest & Mutator Ledger
                 </div>
-                <div className="terminal-console h-[160px] bg-black/70 border border-pink-500/5 select-none text-[10px] leading-relaxed">
+                <div className="terminal-console h-[160px] bg-black/60 border border-pink-500/10 select-none text-[10px] leading-relaxed backdrop-blur-sm">
                   {evolution.evolutionLogs.map((evLog, idx) => {
                     let color = "text-slate-400";
                     if (evLog.includes("SUCCESS")) color = "text-neon-green font-semibold";
