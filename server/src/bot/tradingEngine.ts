@@ -368,34 +368,53 @@ export class TradingEngine {
   private async evaluateStrategy(indicators: TechnicalIndicators) {
     const openTrades = this.trades.filter((t) => t.status === 'OPEN');
     const hasActiveTrade = openTrades.length > 0;
-    const averageEntryPrice = hasActiveTrade 
-      ? openTrades.reduce((sum, t) => sum + t.price, 0) / openTrades.length 
+    const averageEntryPrice = hasActiveTrade
+      ? openTrades.reduce((sum, t) => sum + t.price, 0) / openTrades.length
       : 0;
+
+    // Compute real trade statistics for Kelly Criterion
+    const closedTrades = this.trades.filter((t) => t.status === 'CLOSED' && t.pnl !== undefined);
+    const winningTrades = closedTrades.filter((t) => (t.pnl || 0) > 0);
+    const losingTrades = closedTrades.filter((t) => (t.pnl || 0) <= 0);
+    const winRate = closedTrades.length > 0 ? winningTrades.length / closedTrades.length : 0.5;
+    const avgWin = winningTrades.length > 0
+      ? winningTrades.reduce((s, t) => s + (t.pnlPercent || 0), 0) / winningTrades.length / 100
+      : 0.012;
+    const avgLoss = losingTrades.length > 0
+      ? Math.abs(losingTrades.reduce((s, t) => s + (t.pnlPercent || 0), 0) / losingTrades.length) / 100
+      : 0.008;
+    const tradeStats = { winRate, avgWin, avgLoss };
 
     let signal: StrategySignal = { action: 'HOLD', confidence: 0, reason: 'Waiting for evaluation.' };
 
     switch (this.config.strategy) {
       case 'ORACLE':
-        // Generate future lookahead list
-        const futureLookahead: number[] = [];
-        let priceCursor = indicators.currentPrice;
-        for (let i = 0; i < 5; i++) {
-          priceCursor = priceCursor + (Math.random() - 0.45) * 0.006 * priceCursor; // artificially positive bias
-          futureLookahead.push(priceCursor);
-        }
-        signal = this.strategyManager.getTemporalOracleSignal(indicators, futureLookahead);
+        // Binomial Distribution Oracle — uses real price history
+        signal = this.strategyManager.getTemporalOracleSignal(
+          indicators,
+          [], // futurePrices not needed — binomial uses history
+          this.pricesBuffer
+        );
         break;
 
       case 'GRID_DCA':
-        signal = this.strategyManager.getGridDcaSignal(indicators, hasActiveTrade, averageEntryPrice);
+        // Z-Score Statistical Arbitrage
+        signal = this.strategyManager.getGridDcaSignal(
+          indicators,
+          hasActiveTrade,
+          averageEntryPrice,
+          this.pricesBuffer
+        );
         break;
 
       case 'NEURAL_NETWORK':
-        signal = this.strategyManager.getAiNeuralNetSignal(indicators);
+        // Kalman Filter + Hurst Exponent regime detection
+        signal = this.strategyManager.getAiNeuralNetSignal(indicators, this.pricesBuffer);
         break;
 
       case 'CONSERVATIVE':
-        signal = this.strategyManager.getConservativeSignal(indicators);
+        // Kelly Criterion + Variance Ratio
+        signal = this.strategyManager.getConservativeSignal(indicators, this.pricesBuffer, tradeStats);
         break;
     }
 
@@ -405,16 +424,15 @@ export class TradingEngine {
       await this.executeEntry('BUY', indicators.currentPrice, signal.reason);
     } else if (signal.action === 'SELL' && hasActiveTrade) {
       this.log(`AI strategy [${this.config.strategy}] generated SELL signal! Reason: ${signal.reason}`);
-      // Close all open buy trades
       for (const openTrade of openTrades) {
         await this.executeExit(openTrade, indicators.currentPrice, signal.reason);
       }
     } else if (signal.action === 'BUY' && hasActiveTrade && this.config.strategy === 'GRID_DCA') {
-      // DCA safety order buy
       this.log(`AI strategy [${this.config.strategy}] triggered DCA buy! Reason: ${signal.reason}`);
       await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`);
     }
   }
+
 
   private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string) {
     const symbol = 'DOGEUSDT';
