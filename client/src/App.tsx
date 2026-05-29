@@ -30,6 +30,8 @@ interface Trade {
   exitPrice?: number;
   exitTimestamp?: number;
   reason?: string;
+  targetSL?: number;
+  targetTP?: number;
 }
 
 interface NeuralNetwork {
@@ -66,10 +68,9 @@ interface EvolutionStats {
 interface BotConfig {
   mode: 'DEMO' | 'TESTNET' | 'REAL';
   isRunning: boolean;
-  strategy: 'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE' | 'GEMMA_4';
+  strategy: 'AI_UNIFIED';
   tradeSizeUSDT: number;
-  stopLossPercent: number;
-  takeProfitPercent: number;
+  geminiApiKey: string;
   binanceApiKey: string;
   binanceApiSecret: string;
   gridLayers: number;
@@ -103,10 +104,9 @@ export default function App() {
   const [config, setConfig] = useState<BotConfig>({
     mode: 'DEMO',
     isRunning: false,
-    strategy: 'ORACLE',
+    strategy: 'AI_UNIFIED',
     tradeSizeUSDT: 50,
-    stopLossPercent: 2.0,
-    takeProfitPercent: 1.5,
+    geminiApiKey: '',
     binanceApiKey: '',
     binanceApiSecret: '',
     gridLayers: 3,
@@ -170,10 +170,8 @@ export default function App() {
   // Settings modification state
   const [editApiKey, setEditApiKey] = useState('');
   const [editApiSecret, setEditApiSecret] = useState('');
+  const [editGeminiApiKey, setEditGeminiApiKey] = useState('');
   const [editTradeSize, setEditTradeSize] = useState(50);
-  const [editStopLoss, setEditStopLoss] = useState(2.0);
-  const [editTakeProfit, setEditTakeProfit] = useState(1.5);
-  const [editStrategy, setEditStrategy] = useState<'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE' | 'GEMMA_4'>('ORACLE');
   const [editMode, setEditMode] = useState<'DEMO' | 'TESTNET' | 'REAL'>('DEMO');
   const [editMarketType, setEditMarketType] = useState<'SPOT' | 'FUTURES'>('SPOT');
   const [editLeverage, setEditLeverage] = useState(5);
@@ -267,10 +265,8 @@ export default function App() {
   useEffect(() => {
     setEditApiKey(config.binanceApiKey || '');
     setEditApiSecret(config.binanceApiSecret || '');
+    setEditGeminiApiKey(config.geminiApiKey || '');
     setEditTradeSize(config.tradeSizeUSDT);
-    setEditStopLoss(config.stopLossPercent);
-    setEditTakeProfit(config.takeProfitPercent);
-    setEditStrategy(config.strategy);
     setEditMode(config.mode);
     setEditMarketType(config.marketType || 'SPOT');
     setEditLeverage(config.leverage || 5);
@@ -299,10 +295,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode: editMode,
-          strategy: editStrategy,
+          strategy: 'AI_UNIFIED',
           tradeSizeUSDT: Number(editTradeSize),
-          stopLossPercent: Number(editStopLoss),
-          takeProfitPercent: Number(editTakeProfit),
+          geminiApiKey: editGeminiApiKey,
           binanceApiKey: editApiKey,
           binanceApiSecret: editApiSecret,
           marketType: editMarketType,
@@ -792,14 +787,9 @@ export default function App() {
             <div>
               <div className="flex items-baseline gap-2 mt-2">
                 <h3 className="text-2xl font-bold text-white font-mono">{stats.winRatePercent}%</h3>
-                {config.strategy === 'ORACLE' && (
-                  <span className="text-[9px] text-neon-cyan border border-cyan-500/25 px-1 py-0.5 rounded font-mono bg-cyan-950/20 flex items-center gap-0.5">
-                    <Sparkles size={8} /> ORACLE
-                  </span>
-                )}
-                {config.strategy === 'GEMMA_4' && (
+                {config.strategy === 'AI_UNIFIED' && (
                   <span className="text-[9px] text-purple-300 border border-purple-500/40 px-1 py-0.5 rounded font-mono bg-purple-950/30 flex items-center gap-0.5" style={{ boxShadow: '0 0 8px rgba(168,85,247,0.3)' }}>
-                    🤖 GEMMA 4
+                    🧠 UNIFIED AI
                   </span>
                 )}
               </div>
@@ -898,17 +888,9 @@ export default function App() {
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs text-slate-400 font-semibold uppercase">AI Trading Model</label>
-                  <select
-                    value={editStrategy}
-                    onChange={(e) => setEditStrategy(e.target.value as any)}
-                    className="cyber-input cyber-select text-xs font-bold"
-                  >
-                    <option value="ORACLE">TEMPORAL ORACLE (100% WINS DEMO)</option>
-                    <option value="GRID_DCA">GRID / DCA REBOUND (95% WIN-RATE)</option>
-                    <option value="NEURAL_NETWORK">NEURAL NETWORK (RL SELF-TRAINED)</option>
-                    <option value="CONSERVATIVE">CONSERVATIVE RSI + BB CROSSOVER</option>
-                    <option value="GEMMA_4">🤖 GEMMA 4 — PRICE ACTION + LIVE NEWS (Esteban Pérez)</option>
-                  </select>
+                  <div className="cyber-input text-xs font-bold bg-white/5 border-white/10 text-slate-400 cursor-not-allowed flex items-center h-[34px]">
+                    🧠 UNIFIED GEMINI SMC ENGINE
+                  </div>
                 </div>
               </div>
 
@@ -942,7 +924,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs text-slate-400 font-semibold uppercase">Trade Size (USDT)</label>
                   <input
@@ -956,26 +938,15 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-slate-400 font-semibold uppercase">Take Profit (%)</label>
+                  <label className="text-[10px] text-purple-400 font-bold uppercase flex items-center gap-1">
+                    <Key size={12} /> Gemini API Key
+                  </label>
                   <input
-                    type="number"
-                    value={editTakeProfit}
-                    onChange={(e) => setEditTakeProfit(Number(e.target.value))}
-                    step="0.1"
-                    min="0.2"
-                    className="cyber-input text-xs font-mono"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-slate-400 font-semibold uppercase">Stop Loss (%)</label>
-                  <input
-                    type="number"
-                    value={editStopLoss}
-                    onChange={(e) => setEditStopLoss(Number(e.target.value))}
-                    step="0.1"
-                    min="0.5"
-                    className="cyber-input text-xs font-mono"
+                    type="password"
+                    placeholder="AI_..."
+                    value={editGeminiApiKey}
+                    onChange={(e) => setEditGeminiApiKey(e.target.value)}
+                    className="cyber-input text-xs font-mono border-purple-500/30 focus:border-purple-500"
                   />
                 </div>
               </div>
@@ -1201,9 +1172,10 @@ export default function App() {
                     <th>TOTAL (USDT)</th>
                     <th>STATUS</th>
                     <th>CURRENT/EXIT PRICE</th>
+                    <th>TARGET SL/TP</th>
                     <th>NET P&L (USDT)</th>
                     <th>RETURN (%)</th>
-                    <th>TRIGGER TRIGGER</th>
+                    <th>AI REASONING</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1224,6 +1196,9 @@ export default function App() {
                           </span>
                         </td>
                         <td className="font-bold">${indicators.currentPrice.toFixed(5)}</td>
+                        <td className="font-mono">
+                          <span className="text-neon-red">-{trade.targetSL || '?'}%</span> / <span className="text-neon-green">+{trade.targetTP || '?'}%</span>
+                        </td>
                         <td className={profitPercent >= 0 ? 'text-neon-green font-bold' : 'text-neon-red font-bold'}>
                           {profitPercent >= 0 ? '+' : ''}{trade.pnl ? trade.pnl.toFixed(4) : '0.0000'}
                         </td>
@@ -1252,6 +1227,9 @@ export default function App() {
                           </span>
                         </td>
                         <td>${trade.exitPrice ? trade.exitPrice.toFixed(5) : '0.0000'}</td>
+                        <td className="font-mono">
+                          <span className="text-neon-red">-{trade.targetSL || '?'}%</span> / <span className="text-neon-green">+{trade.targetTP || '?'}%</span>
+                        </td>
                         <td className={profitPercent >= 0 ? 'text-neon-green font-bold' : 'text-neon-red font-bold'}>
                           {profitPercent >= 0 ? '+' : ''}{trade.pnl ? trade.pnl.toFixed(4) : '0.0000'}
                         </td>

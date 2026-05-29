@@ -5,6 +5,8 @@ export interface StrategySignal {
   action: 'BUY' | 'SELL' | 'HOLD';
   confidence: number; // 0 to 1
   reason: string;
+  targetSL?: number;
+  targetTP?: number;
 }
 
 export interface TechnicalIndicators {

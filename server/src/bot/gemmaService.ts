@@ -6,12 +6,14 @@ dotenv.config();
 export interface GemmaSignal {
   action: 'BUY' | 'SELL' | 'HOLD';
   confidence: number;
+  stopLossPercent: number;
+  takeProfitPercent: number;
   reason: string;
 }
 
 export class GemmaService {
   private ai: GoogleGenAI | null = null;
-  private modelName = 'gemma-4-26b-a4b-it';
+  private modelName = 'gemini-1.5-flash';
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -19,7 +21,14 @@ export class GemmaService {
       this.ai = new GoogleGenAI({ apiKey });
       console.log(`[GemmaService] Initialized with API key using model: ${this.modelName}`);
     } else {
-      console.warn('[GemmaService] Warning: GEMINI_API_KEY not found in environment variables. Gemma 4 strategy will fall back to HOLD.');
+      console.warn('[GemmaService] Warning: GEMINI_API_KEY not found in environment variables. Unified AI strategy will fall back to HOLD.');
+    }
+  }
+
+  updateApiKey(apiKey: string) {
+    if (apiKey) {
+      this.ai = new GoogleGenAI({ apiKey });
+      console.log(`[GemmaService] API key updated dynamically.`);
     }
   }
 
@@ -33,6 +42,8 @@ export class GemmaService {
       return {
         action: 'HOLD',
         confidence: 0.5,
+        stopLossPercent: 2.0,
+        takeProfitPercent: 1.5,
         reason: 'Gemma Service not initialized (missing GEMINI_API_KEY).',
       };
     }
@@ -157,11 +168,14 @@ ${formattedCandles}
 3. Review the candle wicks (mechas) of the recent candles for liquidity sweeps or rejection wicks.
 4. Combine this structural SMC analysis with your Google Search news findings and Esteban Pérez's recent outlook.
 5. Output a trading signal (BUY, SELL, or HOLD) aligning perfectly with this conformed institutional strategy and strict risk management.
+6. Calculate the exact stopLossPercent (e.g. 1.5) and takeProfitPercent (e.g. 3.0) dynamically. The stop loss should be tightly behind the valid Order Block or swing low/high, and the take profit should target the next liquidity pool (swing point) or unmitigated FVG/OB.
 
 Your response must be a single, raw JSON object (with no markdown wrappers, no backticks, and no extra text) matching this schema exactly:
 {
   "action": "BUY" | "SELL" | "HOLD",
   "confidence": number, // between 0.0 and 1.0
+  "stopLossPercent": number, // positive float representing % (e.g. 1.25)
+  "takeProfitPercent": number, // positive float representing % (e.g. 2.50)
   "reason": "Detailed step-by-step analysis in Spanish. Point out: 1) the market structure trend (CHoCH/BOS), 2) unmitigated Order Blocks (OB) and imbalances (FVG) identified near current price, 3) recent candle wick/liquidity sweeps, 4) news findings, and 5) how the risk invalidation level (stop loss) is placed relative to the mitigated Order Block according to SMC rules."
 }
 `;
@@ -186,7 +200,11 @@ Your response must be a single, raw JSON object (with no markdown wrappers, no b
       const signal: GemmaSignal = JSON.parse(cleanText);
       
       // Validate response structure
-      if (['BUY', 'SELL', 'HOLD'].includes(signal.action) && typeof signal.confidence === 'number' && typeof signal.reason === 'string') {
+      if (['BUY', 'SELL', 'HOLD'].includes(signal.action) && 
+          typeof signal.confidence === 'number' && 
+          typeof signal.stopLossPercent === 'number' && 
+          typeof signal.takeProfitPercent === 'number' && 
+          typeof signal.reason === 'string') {
         return signal;
       }
 
@@ -196,7 +214,9 @@ Your response must be a single, raw JSON object (with no markdown wrappers, no b
       return {
         action: 'HOLD',
         confidence: 0.5,
-        reason: `Failed to generate Gemma 4 signal: ${error.message}`,
+        stopLossPercent: 2.0,
+        takeProfitPercent: 1.5,
+        reason: `Failed to generate Gemma signal: ${error.message}`,
       };
     }
   }
