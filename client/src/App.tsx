@@ -669,133 +669,127 @@ export default function App() {
 
   return (
     <div className="min-h-screen relative z-10 flex flex-col bg-[#050508] text-slate-200 overflow-x-hidden">
-      {/* Global HUD Scanning Line effect */}
-      <div className="fixed inset-0 pointer-events-none z-50 opacity-[0.03] scanline" />
-      <div className="fixed inset-0 pointer-events-none z-0 bg-[radial-gradient(#1e293b_0.5px,transparent_0.5px)] [background-size:24px_24px] opacity-20" />
-
-      {/* Top Ambient Light Gradients */}
-      <div className="fixed top-[-10%] left-1/4 w-[500px] h-[500px] bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" />
-      <div className="fixed top-[-10%] right-1/4 w-[500px] h-[500px] bg-pink-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" style={{ animationDelay: '2s' }} />
+      {/* Ambient light orbs */}
+      <div className="fixed top-0 left-1/3 w-[600px] h-[300px] rounded-full pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(59,130,246,0.06) 0%, transparent 70%)', filter: 'blur(40px)' }} />
+      <div className="fixed top-0 right-1/3 w-[500px] h-[250px] rounded-full pointer-events-none" style={{ background: 'radial-gradient(ellipse, rgba(139,92,246,0.05) 0%, transparent 70%)', filter: 'blur(40px)' }} />
 
       {/* HEADER NAVBAR */}
-      <header className="fixed top-0 left-0 right-0 border-b border-white/10 bg-black/40 backdrop-filter backdrop-blur-2xl z-50 px-6 py-3 shadow-2xl">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between">
+      <header className="app-header px-6 py-0">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between h-14">
+          {/* Brand */}
           <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-tr from-cyan-500/20 to-pink-500/20 p-2 rounded-xl flex items-center justify-center border border-white/10">
-              <Bot className="text-white" size={24} />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.3), rgba(139,92,246,0.3))', border: '1px solid rgba(59,130,246,0.3)' }}>
+              <Bot size={17} className="text-blue-300" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-                DOGE USDT <span className="text-neon-cyan text-xs font-mono tracking-widest px-2 py-0.5 rounded border border-cyan-500/30 bg-cyan-950/20">AI TRADER</span>
+              <h1 className="text-sm font-bold tracking-tight text-white leading-none flex items-center gap-2">
+                DOGE/USDT
+                <span className="badge badge-blue text-[9px]">AI TRADER</span>
+                <span className="badge badge-violet text-[9px]">SMC ENGINE</span>
               </h1>
-              <p className="text-xs text-slate-400">Autonomous Quantitative Neural Bot</p>
+              <p className="text-[10px] text-slate-500 mt-0.5 font-medium tracking-wide">Autonomous Quantitative · Gemma 4 · Order Flow</p>
             </div>
           </div>
 
-          {/* Real-time Ticker price display */}
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col items-end">
-              <span className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold">Market Vector</span>
-              <span className={`text-2xl font-mono font-bold tracking-tighter transition-all duration-300 ${priceDirection === 'UP' ? 'text-neon-green [text-shadow:0_0_10px_rgba(0,255,136,0.5)]' :
-                priceDirection === 'DOWN' ? 'text-neon-red [text-shadow:0_0_10px_rgba(255,51,102,0.5)]' : 'text-white'
-                }`}>
-                ${indicators.currentPrice.toFixed(5)}
-              </span>
+          {/* Center: live price */}
+          <div className="flex flex-col items-center">
+            <span className="text-[9px] text-slate-600 uppercase tracking-[0.15em] font-semibold">DOGE / USDT</span>
+            <span className={`text-xl font-bold font-mono tracking-tight transition-colors duration-200 ${
+              priceDirection === 'UP' ? 'text-neon-green' :
+              priceDirection === 'DOWN' ? 'text-neon-red' : 'text-white'
+            }`}>
+              ${indicators.currentPrice.toFixed(5)}
+            </span>
+          </div>
+
+          {/* Right: status + controls */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium" style={{ background: isConnected ? 'rgba(16,185,129,0.06)' : 'rgba(244,63,94,0.06)', border: `1px solid ${isConnected ? 'rgba(16,185,129,0.2)' : 'rgba(244,63,94,0.2)'}`, color: isConnected ? '#6ee7b7' : '#fda4af' }}>
+              <span className={`pulse-dot ${isConnected ? 'pulse-dot-green' : 'pulse-dot-red'}`} />
+              {isConnected ? 'Connected' : 'Connecting...'}
             </div>
 
-            {/* Connection & Run Status */}
-            <div className="h-10 w-[1px] bg-white/10" />
-
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs text-slate-300">
-                <span className={`pulse-dot ${isConnected ? 'pulse-dot-cyan' : 'pulse-dot-red'}`} />
-                {isConnected ? 'NODE ENGINE CONNECTED' : 'CONNECTING SERVER...'}
-              </div>
-
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/5 text-xs text-slate-300">
-                <span className={`pulse-dot ${config.isRunning ? 'pulse-dot-green' : 'pulse-dot-red'}`} />
-                BOT STATUS: {config.isRunning ? 'ACTIVE' : 'STANDBY'}
-              </div>
-
-              <button
-                onClick={toggleBot}
-                disabled={!isConnected}
-                className={`btn-cyber ${config.isRunning ? 'btn-cyber-red' : 'btn-cyber-green'}`}
-              >
-                {config.isRunning ? (
-                  <>
-                    <Square size={14} fill="#fff" /> SUSPEND AI
-                  </>
-                ) : (
-                  <>
-                    <Play size={14} fill="#fff" /> ACTIVATE AI
-                  </>
-                )}
-              </button>
-
-              {/* Nuevo botón para descargar historial */}
-              <button
-                onClick={exportTradeHistory}
-                className="p-2 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors text-slate-400"
-                title="Download CSV for Strategy Analysis"
-              >
-                <Activity size={18} />
-              </button>
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium" style={{ background: config.isRunning ? 'rgba(16,185,129,0.06)' : 'rgba(148,163,184,0.04)', border: `1px solid ${config.isRunning ? 'rgba(16,185,129,0.2)' : 'rgba(148,163,184,0.1)'}`, color: config.isRunning ? '#6ee7b7' : '#64748b' }}>
+              <span className={`pulse-dot ${config.isRunning ? 'pulse-dot-green' : 'pulse-dot-red'}`} />
+              {config.isRunning ? 'Engine Active' : 'Standby'}
             </div>
+
+            <div className="w-px h-6 bg-white/10" />
+
+            <button
+              onClick={toggleBot}
+              disabled={!isConnected}
+              className={`btn-cyber ${config.isRunning ? 'btn-cyber-red' : 'btn-cyber-green'} ${config.isRunning ? 'running-indicator' : ''}`}
+            >
+              {config.isRunning ? <><Square size={12} fill="currentColor" /> Pause</> : <><Play size={12} fill="currentColor" /> Launch AI</>}
+            </button>
+
+            <button
+              onClick={exportTradeHistory}
+              className="btn-cyber"
+              title="Export CSV"
+            >
+              <Activity size={13} />
+            </button>
           </div>
         </div>
       </header>
 
       {/* DASHBOARD BODY */}
-      <main className="max-w-[1600px] w-full mx-auto px-6 pt-24 pb-20 flex-grow">
+      <main className="max-w-[1600px] w-full mx-auto px-5 pt-20 pb-20 flex-grow">
 
-        {/* STATS MATRIX SECTION */}
-        <section className="grid grid-cols-5 gap-6 mb-8">
-          <div className="cyber-card cyan-glow-border flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-xs uppercase tracking-wider font-semibold">Net Balance Portfolio</span>
-              <DollarSign size={16} className="text-neon-cyan" />
-            </div>
-            <div>
-              <h3 className="text-2xl font-bold text-white font-mono mt-2">
-                {formatCurrency(stats.totalBalanceUSDT + (stats.dogeBalance * indicators.currentPrice))}
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                {formatCurrency(stats.totalBalanceUSDT)} USDT | {stats.dogeBalance.toFixed(1)} DOGE
-              </p>
-            </div>
-          </div>
+        {/* STATS MATRIX */}
+        <section className="grid grid-cols-5 gap-4 mb-5 mt-4">
 
-          <div className="cyber-card pink-glow-border flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-xs uppercase tracking-wider font-semibold">Net Profit (USDT)</span>
-              <TrendingUp size={16} className="text-neon-pink" />
-            </div>
-            <div>
-              <h3 className={`text-2xl font-bold font-mono mt-2 ${stats.netProfitUSDT >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                {stats.netProfitUSDT >= 0 ? '+' : ''}{formatCurrency(stats.netProfitUSDT)}
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">Closed PnL performance</p>
-            </div>
-          </div>
-
-          <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-xs uppercase tracking-wider font-semibold">Bot Win Rate</span>
-              <Award size={16} className="text-neon-yellow" />
-            </div>
-            <div>
-              <div className="flex items-baseline gap-2 mt-2">
-                <h3 className="text-2xl font-bold text-white font-mono">{stats.winRatePercent}%</h3>
-                {config.strategy === 'AI_UNIFIED' && (
-                  <span className="text-[9px] text-purple-300 border border-purple-500/40 px-1 py-0.5 rounded font-mono bg-purple-950/30 flex items-center gap-0.5" style={{ boxShadow: '0 0 8px rgba(168,85,247,0.3)' }}>
-                    🧠 UNIFIED AI
-                  </span>
-                )}
+          {/* Portfolio Balance */}
+          <div className="cyber-card cyan-glow-border relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200">
+            <div className="card-accent-top accent-cyan-bar" />
+            <div className="flex justify-between items-start">
+              <span className="stat-label">Portfolio</span>
+              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.2)' }}>
+                <DollarSign size={13} className="text-neon-cyan" />
               </div>
-              <p className="text-xs text-slate-500 mt-1">
-                {stats.winningTrades} Wins / {stats.losingTrades} Losses
+            </div>
+            <div className="mt-2">
+              <div className="stat-value text-white">{formatCurrency(stats.totalBalanceUSDT + (stats.dogeBalance * indicators.currentPrice))}</div>
+              <p className="text-[10px] text-slate-600 mt-1 font-mono">
+                {formatCurrency(stats.totalBalanceUSDT)} USDT
               </p>
+            </div>
+          </div>
+
+          {/* Net PnL */}
+          <div className="cyber-card pink-glow-border relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200">
+            <div className="card-accent-top accent-rose-bar" />
+            <div className="flex justify-between items-start">
+              <span className="stat-label">Net P&L</span>
+              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)' }}>
+                <TrendingUp size={13} className="text-neon-pink" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className={`stat-value ${stats.netProfitUSDT >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                {stats.netProfitUSDT >= 0 ? '+' : ''}{formatCurrency(stats.netProfitUSDT)}
+              </div>
+              <p className="text-[10px] text-slate-600 mt-1">Realized closed trades</p>
+            </div>
+          </div>
+
+          {/* Win Rate */}
+          <div className="cyber-card relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200 blue-glow-border">
+            <div className="card-accent-top accent-blue-bar" />
+            <div className="flex justify-between items-start">
+              <span className="stat-label">Win Rate</span>
+              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)' }}>
+                <Award size={13} className="text-blue-400" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="flex items-end gap-2">
+                <div className="stat-value text-white">{stats.winRatePercent}%</div>
+                <span className="badge badge-violet mb-1">🧠 AI</span>
+              </div>
+              <p className="text-[10px] text-slate-600 mt-1">{stats.winningTrades}W / {stats.losingTrades}L</p>
             </div>
           </div>
 

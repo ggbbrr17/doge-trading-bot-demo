@@ -482,14 +482,14 @@ export class TradingEngine {
     // Trigger background refresh if cache is stale and not already fetching
     if (!this.isGemmaFetching && now - this.lastGemmaFetchTime > CACHE_TTL_MS) {
       this.isGemmaFetching = true;
-      this.log('🤖 [Gemma 4] Querying Gemma 4 with Google Search Grounding for latest news & Esteban Pérez price action analysis...');
+      this.log('🤖 [Gemma 4] Querying Gemma 4 with Google Search Grounding for latest Dogecoin & Bitcoin news (analyzing correlation & reliable sources)...');
 
       const emaRatio = indicators.ema.ema20 / (indicators.ema.ema50 || 1.0);
       const bbRange = indicators.bollinger.upper - indicators.bollinger.lower || 0.0001;
       const bbPosition = (indicators.currentPrice - indicators.bollinger.lower) / bbRange;
 
       this.gemmaService.getSignal(
-        'BTC/USDT',
+        'DOGE/USDT',
         indicators.currentPrice,
         { rsi: indicators.rsi, macdHist: indicators.macd.hist, emaRatio, bbPosition },
         this.candles.slice(-15)

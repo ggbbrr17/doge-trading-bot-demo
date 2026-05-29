@@ -121,7 +121,7 @@ export class GemmaService {
       }).join('\n');
 
       const prompt = `
-You are an expert quantitative trading analyst embodying the trading methodology of "Esteban Pérez" from the YouTube channel "Bitcoin Hoy" combined with elite **Smart Money Concepts (SMC)** and **Order Flow** (Institutional Trading) strategies.
+You are an expert quantitative trading analyst specializing in elite **Smart Money Concepts (SMC)** and **Order Flow** (Institutional Trading) strategies.
 Your goal is to perform a detailed **Market Structure & Order Flow** analysis for the asset ${symbol} and output a trading decision: BUY, SELL, or HOLD.
 
 ### ADVANCED INSTITUTIONAL TRADING & ORDER FLOW RULES:
@@ -139,8 +139,8 @@ Your goal is to perform a detailed **Market Structure & Order Flow** analysis fo
    - Take Profit: Target the next major unmitigated Order Block or major swing level.
 
 Please also use Google Search to find:
-1. The latest real-time Bitcoin/Crypto market news, macroeconomic factors, and global market sentiment affecting price action today.
-2. Any very recent specific technical levels, order blocks, or warnings shared by Esteban Pérez on "Bitcoin Hoy" or "Crecetrader" within the last 24 hours.
+1. The latest real-time news about Dogecoin (DOGE) and Bitcoin (BTC) from highly reliable and major financial or crypto news sources (avoiding sensationalist clickbait, low-quality news, or low-authority sites).
+2. Key updates on overall crypto market sentiment, macroeconomic factors, and specific developments/correlations between Bitcoin's price action and how it affects Dogecoin's price movement today.
 
 Here is the real-time technical status of our asset:
 - Current Price: $${currentPrice}
@@ -166,7 +166,7 @@ ${formattedCandles}
 1. Analyze the **Market Structure**. Is the price showing CHoCH (Change of Character) or BOS (Break of Structure)? Is the trend structure bullish, bearish, or ranging?
 2. Locate the active **Order Blocks** and **Fair Value Gaps (FVGs)** from the detected SMC data relative to the current price. Is the price currently mitigating a Bullish or Bearish OB? Is it filling an imbalance?
 3. Review the candle wicks (mechas) of the recent candles for liquidity sweeps or rejection wicks.
-4. Combine this structural SMC analysis with your Google Search news findings and Esteban Pérez's recent outlook.
+4. Combine this structural SMC analysis with your Google Search news findings regarding Dogecoin/Bitcoin and their current market correlation or coupling.
 5. Output a trading signal (BUY, SELL, or HOLD) aligning perfectly with this conformed institutional strategy and strict risk management.
 6. Calculate the exact stopLossPercent (e.g. 1.5) and takeProfitPercent (e.g. 3.0) dynamically. The stop loss should be tightly behind the valid Order Block or swing low/high, and the take profit should target the next liquidity pool (swing point) or unmitigated FVG/OB.
 
@@ -176,7 +176,7 @@ Your response must be a single, raw JSON object (with no markdown wrappers, no b
   "confidence": number, // between 0.0 and 1.0
   "stopLossPercent": number, // positive float representing % (e.g. 1.25)
   "takeProfitPercent": number, // positive float representing % (e.g. 2.50)
-  "reason": "Detailed step-by-step analysis in Spanish. Point out: 1) the market structure trend (CHoCH/BOS), 2) unmitigated Order Blocks (OB) and imbalances (FVG) identified near current price, 3) recent candle wick/liquidity sweeps, 4) news findings, and 5) how the risk invalidation level (stop loss) is placed relative to the mitigated Order Block according to SMC rules."
+  "reason": "Detailed step-by-step analysis in Spanish. Point out: 1) the market structure trend (CHoCH/BOS), 2) unmitigated Order Blocks (OB) and imbalances (FVG) identified near current price, 3) recent candle wick/liquidity sweeps, 4) news findings (specifically mentioning relevant Dogecoin/Bitcoin reliable news and how BTC dynamics are affecting Doge), and 5) how the risk invalidation level (stop loss) is placed relative to the mitigated Order Block according to SMC rules."
 }
 `;
 
