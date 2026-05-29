@@ -93,8 +93,8 @@ export class TradingEngine {
       gridLayers: 3,
       marketType: 'SPOT',
       leverage: 5,
-      telegramBotToken: '7575795641:AAHdzUClOsiwyqp4mZorLEyvDqeoYIh2LKA',
-      telegramChatId: '7543101442',
+      telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+      telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     };
 
     this.stats = {

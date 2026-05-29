@@ -13,7 +13,7 @@ export interface GemmaSignal {
 
 export class GemmaService {
   private ai: GoogleGenAI | null = null;
-  private modelName = 'gemini-1.5-flash';
+  private modelName = 'gemma-4-26b-a4b-it';
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
