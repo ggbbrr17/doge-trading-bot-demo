@@ -9,6 +9,17 @@ import { saveTradeToHistory } from './persistence';
 
 dotenv.config();
 
+// Auto-restart on unhandled errors: Exiting with code 1 signals Render to restart the container
+process.on('uncaughtException', (error) => {
+  console.error('💥 CRITICAL UNCAUGHT EXCEPTION:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 UNHANDLED REJECTION AT:', promise, 'REASON:', reason);
+  process.exit(1);
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -133,4 +144,21 @@ server.listen(PORT, () => {
   console.log(`   REST API: http://localhost:${PORT}/api`);
   console.log(`   WebSockets: ws://localhost:${PORT}`);
   console.log(`==================================================`);
+
+  // Self-ping to prevent Render Free Tier from putting the app to sleep
+  const selfPingUrl = process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL;
+  if (selfPingUrl) {
+    console.log(`[Self-Ping] Configured for URL: ${selfPingUrl}`);
+    // Ping every 10 minutes (600,000 ms)
+    setInterval(async () => {
+      try {
+        const response = await fetch(`${selfPingUrl}/api/state`);
+        console.log(`[Self-Ping] Keep-alive ping sent to ${selfPingUrl}/api/state - Status: ${response.status}`);
+      } catch (e: any) {
+        console.error(`[Self-Ping] Keep-alive ping failed: ${e.message}`);
+      }
+    }, 10 * 60 * 1000);
+  } else {
+    console.log('[Self-Ping] Disabled. Define RENDER_EXTERNAL_URL or SELF_PING_URL in environment/env to activate.');
+  }
 });

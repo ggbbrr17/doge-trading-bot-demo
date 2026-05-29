@@ -66,7 +66,7 @@ interface EvolutionStats {
 interface BotConfig {
   mode: 'DEMO' | 'TESTNET' | 'REAL';
   isRunning: boolean;
-  strategy: 'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE';
+  strategy: 'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE' | 'GEMMA_4';
   tradeSizeUSDT: number;
   stopLossPercent: number;
   takeProfitPercent: number;
@@ -173,7 +173,7 @@ export default function App() {
   const [editTradeSize, setEditTradeSize] = useState(50);
   const [editStopLoss, setEditStopLoss] = useState(2.0);
   const [editTakeProfit, setEditTakeProfit] = useState(1.5);
-  const [editStrategy, setEditStrategy] = useState<'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE'>('ORACLE');
+  const [editStrategy, setEditStrategy] = useState<'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE' | 'GEMMA_4'>('ORACLE');
   const [editMode, setEditMode] = useState<'DEMO' | 'TESTNET' | 'REAL'>('DEMO');
   const [editMarketType, setEditMarketType] = useState<'SPOT' | 'FUTURES'>('SPOT');
   const [editLeverage, setEditLeverage] = useState(5);
@@ -788,6 +788,11 @@ export default function App() {
                     <Sparkles size={8} /> ORACLE
                   </span>
                 )}
+                {config.strategy === 'GEMMA_4' && (
+                  <span className="text-[9px] text-purple-300 border border-purple-500/40 px-1 py-0.5 rounded font-mono bg-purple-950/30 flex items-center gap-0.5" style={{boxShadow:'0 0 8px rgba(168,85,247,0.3)'}}>
+                    🤖 GEMMA 4
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-1">
                 {stats.winningTrades} Wins / {stats.losingTrades} Losses
@@ -893,6 +898,7 @@ export default function App() {
                     <option value="GRID_DCA">GRID / DCA REBOUND (95% WIN-RATE)</option>
                     <option value="NEURAL_NETWORK">NEURAL NETWORK (RL SELF-TRAINED)</option>
                     <option value="CONSERVATIVE">CONSERVATIVE RSI + BB CROSSOVER</option>
+                    <option value="GEMMA_4">🤖 GEMMA 4 — PRICE ACTION + LIVE NEWS (Esteban Pérez)</option>
                   </select>
                 </div>
               </div>

@@ -4,6 +4,7 @@ import { BinanceClient } from '../utils/binanceClient';
 import { CustomNeuralNetwork } from './aiModel';
 import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicators } from './strategies';
 import { EvolutionEngine } from './evolutionEngine';
+import { GemmaService, GemmaSignal } from './gemmaService';
 
 export interface Trade {
   id: string;
@@ -36,7 +37,7 @@ export interface BotStats {
 export interface BotConfig {
   mode: 'DEMO' | 'TESTNET' | 'REAL';
   isRunning: boolean;
-  strategy: 'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE';
+  strategy: 'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE' | 'GEMMA_4';
   tradeSizeUSDT: number;
   stopLossPercent: number;
   takeProfitPercent: number;
@@ -61,6 +62,10 @@ export class TradingEngine {
   private neuralNet: CustomNeuralNetwork;
   private strategyManager: StrategyManager;
   private evolutionEngine: EvolutionEngine;
+  private gemmaService: GemmaService;
+  private cachedGemmaSignal: GemmaSignal | null = null;
+  private lastGemmaFetchTime = 0;
+  private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
   private stateFilePath: string;
 
@@ -73,6 +78,7 @@ export class TradingEngine {
     this.neuralNet = new CustomNeuralNetwork();
     this.strategyManager = new StrategyManager(this.neuralNet);
     this.evolutionEngine = new EvolutionEngine();
+    this.gemmaService = new GemmaService();
 
     // Initial Defaults
     this.config = {
@@ -405,6 +411,9 @@ export class TradingEngine {
   }
 
   private async evaluateStrategy(indicators: TechnicalIndicators) {
+    // Always trigger background Gemma 4 updates to ensure fresh qualitative/sentiment data is available
+    this.triggerBackgroundGemmaFetch(indicators);
+
     const openTrades = this.trades.filter((t) => t.status === 'OPEN');
     const hasActiveTrade = openTrades.length > 0;
     const averageEntryPrice = hasActiveTrade
@@ -427,15 +436,22 @@ export class TradingEngine {
     // Get dynamically evolved mathematical genes
     const genes = this.evolutionEngine.getActiveGenes();
 
-    // Use the new Unified Strategy voting process to get the signal
-    const signal: StrategySignal = this.strategyManager.getUnifiedSignal(
-      indicators,
-      this.pricesBuffer,
-      hasActiveTrade,
-      averageEntryPrice,
-      tradeStats,
-      genes
-    );
+    let signal: StrategySignal;
+
+    if (this.config.strategy === 'GEMMA_4') {
+      signal = await this.getGemmaSignal(indicators);
+    } else {
+      // Use the new Unified Strategy voting process, passing the cached Gemma 4 signal as the 5th voter!
+      signal = this.strategyManager.getUnifiedSignal(
+        indicators,
+        this.pricesBuffer,
+        hasActiveTrade,
+        averageEntryPrice,
+        tradeStats,
+        genes,
+        this.cachedGemmaSignal
+      );
+    }
 
     // Process Signal Action
     if (signal.action === 'BUY' && !hasActiveTrade) {
@@ -469,6 +485,59 @@ export class TradingEngine {
     }
   }
 
+  // Trigger background Gemma 4 analysis fetch if cache is expired
+  private triggerBackgroundGemmaFetch(indicators: TechnicalIndicators) {
+    const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+    const now = Date.now();
+
+    // Trigger background refresh if cache is stale and not already fetching
+    if (!this.isGemmaFetching && now - this.lastGemmaFetchTime > CACHE_TTL_MS) {
+      this.isGemmaFetching = true;
+      this.log('🤖 [Gemma 4] Querying Gemma 4 with Google Search Grounding for latest news & Esteban Pérez price action analysis...');
+
+      const emaRatio = indicators.ema.ema20 / (indicators.ema.ema50 || 1.0);
+      const bbRange = indicators.bollinger.upper - indicators.bollinger.lower || 0.0001;
+      const bbPosition = (indicators.currentPrice - indicators.bollinger.lower) / bbRange;
+
+      this.gemmaService.getSignal(
+        'BTC/USDT',
+        indicators.currentPrice,
+        { rsi: indicators.rsi, macdHist: indicators.macd.hist, emaRatio, bbPosition },
+        this.candles.slice(-15)
+      ).then((gemmaSignal) => {
+        this.cachedGemmaSignal = gemmaSignal;
+        this.lastGemmaFetchTime = Date.now();
+        this.isGemmaFetching = false;
+        this.log(`🤖 [Gemma 4] Signal updated → ${gemmaSignal.action} (Confidence: ${(gemmaSignal.confidence * 100).toFixed(0)}%) | ${gemmaSignal.reason.substring(0, 200)}...`);
+        this.triggerUpdate();
+      }).catch((err) => {
+        this.isGemmaFetching = false;
+        this.log(`🤖 [Gemma 4] Signal fetch failed: ${err.message}`);
+      });
+    }
+  }
+
+  // Gemma 4 strategy: query the LLM every 10 minutes; use cached result between calls
+  private async getGemmaSignal(indicators: TechnicalIndicators): Promise<StrategySignal> {
+    this.triggerBackgroundGemmaFetch(indicators);
+
+    // Return cached signal or HOLD if we haven't received one yet
+    if (this.cachedGemmaSignal) {
+      const now = Date.now();
+      const ageMinutes = ((now - this.lastGemmaFetchTime) / 60000).toFixed(1);
+      return {
+        action: this.cachedGemmaSignal.action,
+        confidence: this.cachedGemmaSignal.confidence,
+        reason: `🤖 Gemma 4 (${ageMinutes}min ago): ${this.cachedGemmaSignal.reason}`,
+      };
+    }
+
+    return {
+      action: 'HOLD',
+      confidence: 0.5,
+      reason: '🤖 Gemma 4: Awaiting first analysis from Gemini + Google Search...',
+    };
+  }
 
   private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string) {
     const symbol = 'DOGEUSDT';
