@@ -353,7 +353,9 @@ export default function App() {
       alert('Por favor, introduce el Token del Bot y el Chat ID de Telegram.');
       return;
     }
-    await fetch('http://localhost:5000/api/send-telegram-test', {
+    // Usamos una URL dinámica para que funcione en Render/Netlify
+    const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+    await fetch(`${apiBase}/api/send-telegram-test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: editTelegramBotToken, chatId: editTelegramChatId })

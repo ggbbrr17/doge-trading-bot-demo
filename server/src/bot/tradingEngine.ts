@@ -597,6 +597,17 @@ export class TradingEngine {
 
         this.log(`Binance exit order filled. PnL: $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)`);
 
+        // Enviar notificación de Telegram para salida REAL
+        const telegramMsg = `*DOGE Bot Notification (REAL)* 🤖\n\n` +
+          `*Trade ID:* ${trade.id}\n` +
+          `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
+          `*Exit Price:* $${fillPrice.toFixed(5)}\n` +
+          `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
+          `*Reason:* ${reason}`;
+
+        // No bloqueamos el hilo principal, enviamos en segundo plano
+        this.sendTelegramMessage(telegramMsg);
+
         // Train Neural Network using trade feedback!
         this.trainModelOnExit(trade);
 
@@ -775,38 +786,20 @@ export class TradingEngine {
     };
   }
 
-  private sendTelegramMessage(text: string) {
+  private async sendTelegramMessage(text: string) {
     const token = this.config.telegramBotToken;
     const chatId = this.config.telegramChatId;
 
     if (!token || !chatId) return;
 
-    const data = JSON.stringify({
-      chat_id: chatId,
-      text: text,
-      parse_mode: 'Markdown',
-    });
-
-    const options = {
-      hostname: 'api.telegram.org',
-      port: 443,
-      path: `/bot${token}/sendMessage`,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
-
-    const req = require('https').request(options, (res: any) => {
-      res.on('data', () => { });
-    });
-
-    req.on('error', (e: any) => {
-      console.error(`Telegram notification error: ${e.message}`);
-    });
-
-    req.write(data);
-    req.end();
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'Markdown' })
+      });
+    } catch (error: any) {
+      console.error(`Telegram notification error: ${error.message}`);
+    }
   }
 }
