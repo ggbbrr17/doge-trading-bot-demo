@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
     "install:all": "npm install && npm install --prefix server && npm install --prefix client --legacy-peer-deps",
-    "build": "npm run build --prefix server && npm run build --prefix client",
+    "build": "npm install --prefix server && npm install --prefix client --legacy-peer-deps && npm run build --prefix server && npm run build --prefix client",
     "start": "npm run start --prefix server"
   },
   "devDependencies": {
