@@ -14,6 +14,12 @@ export interface TechnicalIndicators {
   macd: { macd: number; signal: number; hist: number };
   ema: { ema20: number; ema50: number; ema200: number };
   bollinger: { upper: number; middle: number; lower: number; width: number };
+  atr: number;
+  vwap: number;
+  fractalDimension: number;
+  efficiencyRatio: number;
+  botActivity: number;
+  htfAlignment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   currentPrice: number;
 }
 
@@ -195,10 +201,55 @@ function momentumScore(prices: number[], lookback: number = 20, skip: number = 1
   return (end - start) / start;
 }
 
+/**
+ * KAUFMAN EFFICIENCY RATIO (ER)
+ * Mide la eficiencia del movimiento del precio.
+ * ER = Cambio absoluto / Suma de cambios absolutos individuales
+ * Cerca de 1.0 -> Tendencia perfecta (Institucional)
+ * Cerca de 0.0 -> Mercado ruidoso / Lateral
+ */
+function efficiencyRatio(prices: number[], window: number = 14): number {
+  if (prices.length < window + 1) return 0.5;
+  const slice = prices.slice(-window);
+  const totalChange = Math.abs(slice[slice.length - 1] - slice[0]);
+  let sumChanges = 0;
+  for (let i = 1; i < slice.length; i++) {
+    sumChanges += Math.abs(slice[i] - slice[i - 1]);
+  }
+  return sumChanges === 0 ? 0 : totalChange / sumChanges;
+}
+
+/**
+ * FRACTAL DIMENSION INDEX (FDI)
+ * Determina la complejidad geométrica del mercado.
+ * FDI < 1.5 -> Mercado persistente (Trending)
+ * FDI > 1.5 -> Mercado antipersistente (Mean Reverting / Ranging)
+ */
+function fractalDimension(prices: number[], window: number = 30): number {
+  if (prices.length < window) return 1.5;
+  const slice = prices.slice(-window);
+
+  const maxPrice = Math.max(...slice);
+  const minPrice = Math.min(...slice);
+  const range = maxPrice - minPrice;
+
+  if (range === 0) return 1.5;
+
+  let length = 0;
+  for (let i = 1; i < slice.length; i++) {
+    const diff = (slice[i] - slice[i - 1]) / range;
+    length += Math.sqrt(Math.pow(diff, 2) + Math.pow(1 / window, 2));
+  }
+
+  // D = 1 + [log(L) + log(2)] / log(2 * (n-1))
+  const d = 1 + (Math.log(length) + Math.log(2)) / Math.log(2 * (window - 1));
+  return Math.max(1.0, Math.min(2.0, d));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // UI compatibility helper
 // ═══════════════════════════════════════════════════════════════════════════════
-export function calculateIndicators(prices: number[]): TechnicalIndicators {
+export function calculateIndicators(prices: number[], candles: any[] = []): TechnicalIndicators {
   const currentPrice = prices[prices.length - 1] || 0;
 
   const emaCalc = (period: number): number => {
@@ -241,11 +292,62 @@ export function calculateIndicators(prices: number[]): TechnicalIndicators {
   }
   const width = (upper - lower) / (middle || 1);
 
+  // 1. Average True Range (ATR) - Volatility measure
+  let atr = 0;
+  if (candles.length >= 14) {
+    const trs: number[] = [];
+    for (let i = 1; i < candles.length; i++) {
+      const h = candles[i].high;
+      const l = candles[i].low;
+      const pc = candles[i - 1].close;
+      trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    }
+    atr = trs.slice(-14).reduce((a, b) => a + b, 0) / 14;
+  }
+
+  // 2. VWAP - Volume Weighted Average Price
+  let vwap = currentPrice;
+  if (candles.length > 0) {
+    let totalVol = 0;
+    let totalPV = 0;
+    candles.slice(-50).forEach(c => {
+      const tp = (c.high + c.low + c.close) / 3;
+      totalPV += tp * c.volume;
+      totalVol += c.volume;
+    });
+    vwap = totalVol > 0 ? totalPV / totalVol : currentPrice;
+  }
+
+  const fdi = fractalDimension(prices);
+  const er = efficiencyRatio(prices);
+
+  // 3. Bot Activity Index (Volume Density)
+  // Mide si hay un volumen inusual concentrado en movimientos eficientes (Algoritmos)
+  let botActivity = 0;
+  if (candles.length >= 20) {
+    const avgVol = candles.slice(-20).reduce((a, b) => a + b.volume, 0) / 20;
+    const currentVol = candles[candles.length - 1].volume;
+    const volAnomaly = currentVol / (avgVol || 1);
+
+    // Si el volumen es > 2x el promedio y el precio se mueve de forma eficiente, hay bots.
+    botActivity = volAnomaly * er;
+  }
+
+  // 4. HTF Bias Detection (Temporalidad Superior Inferida)
+  // Usamos una ventana de 200 periodos para inferir el sesgo de una temporalidad mayor
+  let htfAlignment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+  if (prices.length >= 200) {
+    const slope = (ema50 - prices[prices.length - 10]) / prices[prices.length - 10];
+
+    if (currentPrice > ema200 && ema50 > ema200 && slope > 0) htfAlignment = 'BULLISH';
+    else if (currentPrice < ema200 && ema50 < ema200 && slope < 0) htfAlignment = 'BEARISH';
+  }
+
   return {
     rsi, macd: { macd: macdVal, signal: signalVal, hist },
     ema: { ema20, ema50, ema200 },
     bollinger: { upper, middle, lower, width },
-    currentPrice,
+    atr, vwap, fractalDimension: fdi, efficiencyRatio: er, botActivity, htfAlignment, currentPrice,
   };
 }
 
@@ -569,6 +671,140 @@ export class StrategyManager {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // STRATEGY 5: FRACTAL EFFICIENCY QUANTECH (High-End Institutional)
+  // ───────────────────────────────────────────────────────────────────────────
+  getInstitutionalQuantSignal(indicators: TechnicalIndicators): StrategySignal {
+    const { fractalDimension: fdi, efficiencyRatio: er, currentPrice, vwap } = indicators;
+
+    const isEfficient = er > 0.6; // Movimiento muy "limpio"
+    const isTrending = fdi < 1.45; // El mercado tiene inercia
+    const isOverextended = fdi > 1.65; // El mercado está agotado/ruidoso
+
+    const erFmt = er.toFixed(2);
+    const fdiFmt = fdi.toFixed(2);
+
+    // Señal de Compra Institucional: Tendencia limpia confirmada por baja fractalidad
+    if (isTrending && isEfficient && currentPrice > vwap) {
+      return {
+        action: 'BUY',
+        confidence: 0.95,
+        reason: `Institutional Quant: Eficiencia alta (ER=${erFmt}) y Fractilidad baja (FDI=${fdiFmt}). Tendencia sólida detectada por encima del VWAP.`,
+      };
+    }
+
+    // Señal de Venta Institucional: Agotamiento fractal en máximos o ineficiencia
+    if (isOverextended && currentPrice > vwap * 1.02) {
+      return {
+        action: 'SELL',
+        confidence: 0.90,
+        reason: `Institutional Quant: Agotamiento detectado (FDI=${fdiFmt}). El mercado ha perdido su estructura eficiente y se espera reversión al VWAP.`,
+      };
+    }
+
+    if (isTrending && isEfficient && currentPrice < vwap * 0.98) {
+      return {
+        action: 'SELL',
+        confidence: 0.92,
+        reason: `Institutional Quant: Momentum bajista eficiente detectado. ER=${erFmt}, FDI=${fdiFmt}.`,
+      };
+    }
+
+    return {
+      action: 'HOLD',
+      confidence: 0.5,
+      reason: `Institutional Quant: Mercado en estado de equilibrio fractal (ER=${erFmt}, FDI=${fdiFmt}).`,
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // STRATEGY 6: ALGORITHMIC HERD SENSOR (Mass Bot Detection)
+  // ───────────────────────────────────────────────────────────────────────────
+  getBotHerdSignal(indicators: TechnicalIndicators): StrategySignal {
+    const { botActivity, efficiencyRatio: er, currentPrice, vwap } = indicators;
+
+    // Bot Activity > 2.5 indica una anomalía de volumen algorítmico masivo
+    const isBotMassMovement = botActivity > 2.5;
+    const isBullishPressure = currentPrice > vwap && er > 0.7;
+    const isBearishPressure = currentPrice < vwap && er > 0.7;
+
+    if (isBotMassMovement && isBullishPressure) {
+      return {
+        action: 'BUY',
+        confidence: 0.92,
+        reason: `Herd Sensor: Detectada actividad algorítmica masiva (Index: ${botActivity.toFixed(2)}). Los bots están empujando el precio de forma eficiente al alza.`,
+      };
+    }
+
+    if (isBotMassMovement && isBearishPressure) {
+      return {
+        action: 'SELL',
+        confidence: 0.92,
+        reason: `Herd Sensor: Liquidación robótica masiva detectada (Index: ${botActivity.toFixed(2)}). Presión algorítmica bajista confirmada.`,
+      };
+    }
+
+    return {
+      action: 'HOLD',
+      confidence: 0.5,
+      reason: `Herd Sensor: Actividad de bots en niveles normales (${botActivity.toFixed(2)}). Sin movimientos en masa detectados.`,
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // STRATEGY 7: SYSTEMIC OMEGA INVERSION (The "Golden Gate" Entry)
+  // ───────────────────────────────────────────────────────────────────────────
+  /**
+   * Detecta la "Inversión Sistémica": El momento exacto donde el caos (rango)
+   * se transforma en orden (tendencia eficiente) en un nivel de sobreventa.
+   * Utiliza Inferencia Fractal para predecir el inicio de un "Short Squeeze" o "Bull Run".
+   */
+  getOmegaInversionSignal(indicators: TechnicalIndicators, priceHistory: number[]): StrategySignal {
+    const { currentPrice, vwap, efficiencyRatio: er, fractalDimension: fdi, atr } = indicators;
+    const prices = priceHistory.slice(-40);
+    const z = zScore(prices, 20);
+    const H = hurstExponent(prices);
+
+    // 1. Detección de Agotamiento de Rango: El mercado era caótico (H < 0.45)
+    // 2. Inferencia de Iniciación: El ER sube (> 0.65) indicando que el dinero inteligente entró.
+    // 3. Dislocación: El precio está significativamente por debajo del VWAP o Z-Score bajo.
+
+    const isUnderValued = z < -2.1 || currentPrice < vwap * 0.985;
+    const isTransitioningToTrend = er > 0.68 && fdi < 1.48;
+    const hasInertia = H > 0.52;
+
+    if (isUnderValued && isTransitioningToTrend && hasInertia) {
+      // Calculamos un Take Profit inferencial basado en la expansión de volatilidad
+      const targetTP = (atr * 4 / currentPrice) * 100; // Objetivo de 4 ATRs de expansión
+
+      return {
+        action: 'BUY',
+        confidence: 0.98,
+        reason: `Omega Inversion: Transición sistémica detectada. El caos fractal (H=${H.toFixed(2)}) se ha ordenado en una tendencia eficiente (ER=${er.toFixed(2)}) en zona de descuento extremo (Z=${z.toFixed(2)}σ). Punto de iniciación institucional detectado.`,
+        targetTP: Math.max(2.5, targetTP),
+        targetSL: Math.max(1.2, (atr * 1.8 / currentPrice) * 100)
+      };
+    }
+
+    // Señal de Inversión de Techo (Para Salidas o Shorts)
+    const isOverValued = z > 2.1 || currentPrice > vwap * 1.02;
+    const isLosingEfficiency = er < 0.4 && fdi > 1.6;
+
+    if (isOverValued && isLosingEfficiency) {
+      return {
+        action: 'SELL',
+        confidence: 0.94,
+        reason: `Omega Inversion: Agotamiento sistémico. El precio ha entrado en entropía máxima (FDI=${fdi.toFixed(2)}) en zona de sobreextensión. Probabilidad de reversión al VWAP > 90%.`,
+      };
+    }
+
+    return {
+      action: 'HOLD',
+      confidence: 0.5,
+      reason: 'Omega Inversion: El mercado no presenta una transición de fase sistémica clara.',
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // UNIFIED SUPER STRATEGY — Democratic Weighted Voting across all 4 models
   // Each strategy votes BUY or SELL with its confidence. HOLD = abstain.
   // Final decision = highest weighted vote score above minimum quorum.
@@ -588,6 +824,9 @@ export class StrategyManager {
     const statArb = this.getGridDcaSignal(indicators, hasActiveTrade, averageEntryPrice, priceHistory, genes);
     const kalmanHurst = this.getAiNeuralNetSignal(indicators, priceHistory, genes);
     const kelly = this.getConservativeSignal(indicators, priceHistory, tradeStats, genes);
+    const quant = this.getInstitutionalQuantSignal(indicators);
+    const botHerd = this.getBotHerdSignal(indicators);
+    const omega = this.getOmegaInversionSignal(indicators, priceHistory);
 
     // Modify strategy weighting based on the detected HMM market regime
     // Trend strategies: Oracle, KalmanHurst
@@ -619,8 +858,8 @@ export class StrategyManager {
     kalmanHurst.confidence = Math.min(0.99, kalmanHurst.confidence);
     kelly.confidence = Math.min(0.99, kelly.confidence);
 
-    const votes = [oracle, statArb, kalmanHurst, kelly];
-    const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion'];
+    const votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega];
+    const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion', 'Fractal Quant', 'Algo Herd Sensor', 'Omega Inversion'];
 
     if (gemmaSignal) {
       votes.push(gemmaSignal);
@@ -645,6 +884,17 @@ export class StrategyManager {
         holdVoters.push(names[i]);
       }
     });
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // SYSTEMIC TIMEFRAME FILTER: Alineación de Marea
+    // ───────────────────────────────────────────────────────────────────────────
+    // Si la temporalidad superior es bajista, reducimos drásticamente la confianza de compras
+    if (indicators.htfAlignment === 'BEARISH' && buyScore > 0) {
+      buyScore *= 0.4; // Penalización por ir contra la marea
+    }
+    if (indicators.htfAlignment === 'BULLISH' && sellScore > 0) {
+      sellScore *= 0.4; // Penalización por ir contra la marea
+    }
 
     // Minimum quorum: at least 1 strategy must vote + net score must exceed threshold
     // Increased to 0.90 to ensure extremely high probability of profit per user request

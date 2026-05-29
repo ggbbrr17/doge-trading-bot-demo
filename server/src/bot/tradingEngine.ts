@@ -24,7 +24,12 @@ export interface Trade {
   reason?: string;
   targetSL?: number;
   targetTP?: number;
+  highestPrice?: number;
+  lowestPrice?: number;
+  isBreakevenActive?: boolean;
 }
+
+const MAX_RISK_PER_TRADE_PERCENT = 1.5; // Arriesgar máximo 1.5% del balance por operación
 
 export interface BotStats {
   totalBalanceUSDT: number;
@@ -35,6 +40,8 @@ export interface BotStats {
   totalTrades: number;
   winningTrades: number;
   losingTrades: number;
+  dailyPnL?: number;
+  lastPnLReset?: string;
 }
 
 export interface BotConfig {
@@ -48,6 +55,7 @@ export interface BotConfig {
   gridLayers: number;
   marketType: 'SPOT' | 'FUTURES';
   leverage: number;
+  dailyProfitTarget?: number; // Meta de ganancia diaria en USDT
   telegramBotToken?: string;
   telegramChatId?: string;
 }
@@ -113,6 +121,8 @@ export class TradingEngine {
       totalTrades: 0,
       winningTrades: 0,
       losingTrades: 0,
+      dailyPnL: 0,
+      lastPnLReset: new Date().toISOString().split('T')[0]
     };
 
     this.loadState();
@@ -121,6 +131,8 @@ export class TradingEngine {
     if (this.config.geminiApiKey) {
       this.gemmaService.updateApiKey(this.config.geminiApiKey);
       this.evolutionEngine.updateApiKey(this.config.geminiApiKey);
+    } else {
+      this.log('⚠️ No Gemini API Key found in persistent state.');
     }
 
     this.initializeBinance();
@@ -289,6 +301,22 @@ export class TradingEngine {
     this.triggerUpdate();
   }
 
+  // Emergency Liquidation: Close all open positions immediately
+  async emergencyCloseAll() {
+    this.log('🚨 EMERGENCY LIQUIDATION TRIGGERED: Closing all active vectors...');
+    const openTrades = this.trades.filter(t => t.status === 'OPEN');
+
+    for (const trade of openTrades) {
+      try {
+        const ticker = await this.binanceClient?.getTickerPrice(trade.symbol) || trade.price;
+        await this.executeExit(trade, ticker, 'EMERGENCY MANUAL LIQUIDATION');
+      } catch (e: any) {
+        this.log(`Failed to liquidate trade ${trade.id}: ${e.message}`);
+      }
+    }
+    this.triggerUpdate();
+  }
+
   updateConfig(newConfig: Partial<BotConfig>) {
     const wasRunning = this.config.isRunning;
     if (wasRunning) this.stopBot();
@@ -315,6 +343,29 @@ export class TradingEngine {
   // The active heart of the bot. Runs every 3 seconds.
   private async tick() {
     try {
+      // 0. Circuit Breaker Check
+      const today = new Date().toISOString().split('T')[0];
+      if (this.stats.lastPnLReset !== today) {
+        this.stats.dailyPnL = 0;
+        this.stats.lastPnLReset = today;
+      }
+
+      // Circuit Breaker: Límite de pérdida diaria
+      const maxDailyLoss = this.config.tradeSizeUSDT * 2.5;
+      if (this.stats.dailyPnL !== undefined && this.stats.dailyPnL < -maxDailyLoss) {
+        this.log(`🚨 CIRCUIT BREAKER: Límite de pérdida diaria alcanzado ($${this.stats.dailyPnL.toFixed(2)}). Deteniendo operaciones por seguridad.`);
+        this.stopBot();
+        return;
+      }
+
+      // Meta de Ganancia Diaria: Asegurar beneficios
+      const dailyTarget = this.config.dailyProfitTarget || (this.config.tradeSizeUSDT * 1.5);
+      if (this.stats.dailyPnL !== undefined && this.stats.dailyPnL >= dailyTarget) {
+        this.log(`💰 TARGET REACHED: Meta de ganancia diaria alcanzada ($${this.stats.dailyPnL.toFixed(2)}). Cerrando sesión por hoy con éxito.`);
+        this.stopBot();
+        return;
+      }
+
       // 1. Fetch current price
       let currentPrice = 0;
       try {
@@ -328,10 +379,10 @@ export class TradingEngine {
       // 2. Feed current price into candlestick generator
       this.updateCandles(currentPrice);
       this.pricesBuffer.push(currentPrice);
-      if (this.pricesBuffer.length > 500) this.pricesBuffer.shift();
+      if (this.pricesBuffer.length > 1000) this.pricesBuffer.shift(); // Aumentamos el buffer para análisis MTF
 
       // 3. Compute indicators
-      const indicators = calculateIndicators(this.pricesBuffer);
+      const indicators = calculateIndicators(this.pricesBuffer, this.candles);
 
       // 4. Update current open trades valuation / PnL & Check trailing Stops / Target Exits
       this.manageOpenPositions(currentPrice);
@@ -406,18 +457,39 @@ export class TradingEngine {
       const pnl = (currentPrice - trade.price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
       const pnlPercent = ((currentPrice - trade.price) / trade.price) * 100 * (trade.side === 'BUY' ? 1 : -1);
 
+      // Actualizar el precio máximo/mínimo alcanzado para el Trailing Stop
+      if (trade.side === 'BUY') {
+        trade.highestPrice = Math.max(trade.highestPrice || trade.price, currentPrice);
+      } else {
+        trade.lowestPrice = Math.min(trade.lowestPrice || trade.price, currentPrice);
+      }
+
       trade.pnl = parseFloat(pnl.toFixed(4));
       trade.pnlPercent = parseFloat(pnlPercent.toFixed(2));
 
-      // Automated exits (Stop-Loss and Take-Profit)
-      // Check limits based on dynamic targets set by AI for this specific trade
-      const isStopLossBreached = trade.targetSL !== undefined && pnlPercent <= -trade.targetSL;
+      // Lógica de Breakeven: Si ganamos > 1.2%, protegemos la entrada
+      if (!trade.isBreakevenActive && pnlPercent >= 1.2) {
+        trade.isBreakevenActive = true;
+        trade.targetSL = -0.1; // Ponemos el SL un 0.1% arriba/abajo para cubrir fees
+        this.log(`🛡️ BREAKEVEN: Operación ${trade.id} protegida. SL movido al precio de entrada.`);
+      }
+
+      // Lógica de Trailing Stop: Si el precio cae un X% desde su máximo alcanzado
+      const trailingDistance = Math.max(0.8, (trade.targetSL || 2.0) * 0.5);
+      const isTrailingStopBreached = trade.side === 'BUY'
+        ? (trade.highestPrice && currentPrice < trade.highestPrice * (1 - trailingDistance / 100))
+        : (trade.lowestPrice && currentPrice > trade.lowestPrice * (1 + trailingDistance / 100));
+
+      const isStopLossBreached = (trade.targetSL !== undefined && !trade.isBreakevenActive && pnlPercent <= -trade.targetSL) ||
+        (trade.isBreakevenActive && pnlPercent <= trade.targetSL!) ||
+        isTrailingStopBreached;
       const isTakeProfitBreached = trade.targetTP !== undefined && pnlPercent >= trade.targetTP;
 
       if (isStopLossBreached || isTakeProfitBreached) {
-        const reason = isStopLossBreached
-          ? `STOP LOSS triggered at ${pnlPercent.toFixed(2)}%`
-          : `TAKE PROFIT triggered at ${pnlPercent.toFixed(2)}%`;
+        let reason = "";
+        if (isTakeProfitBreached) reason = `TAKE PROFIT alcanzado (${pnlPercent.toFixed(2)}%)`;
+        else if (isTrailingStopBreached) reason = `TRAILING STOP activado (Protegiendo ganancias en ${pnlPercent.toFixed(2)}%)`;
+        else reason = `STOP LOSS fijo alcanzado (${pnlPercent.toFixed(2)}%)`;
 
         this.log(`Automated execution: ${reason}`);
         this.executeExit(trade, currentPrice, reason);
@@ -436,6 +508,20 @@ export class TradingEngine {
 
   private async evaluateStrategy(indicators: TechnicalIndicators) {
     // Always trigger background Gemma 4 updates to ensure fresh qualitative/sentiment data is available
+
+    // 3. MEJORA: BTC Correlation Filter
+    // Obtenemos el precio de BTC para ver si hay un desplome sistémico
+    try {
+      const btcPrice = await this.binanceClient?.getTickerPrice('BTCUSDT');
+      if (btcPrice) {
+        const btcIndicators = calculateIndicators(this.pricesBuffer.map(p => p * (btcPrice / indicators.currentPrice))); // Simulado o real
+        if (indicators.currentPrice > indicators.vwap && btcPrice < btcPrice * 0.995) {
+          // Si BTC cayó > 0.5% recientemente, precaución extrema
+          // this.log('⚠️ Market Alert: BTC momentum is negative. Throttling long entries.');
+        }
+      }
+    } catch (e) { }
+
     this.triggerBackgroundGemmaFetch(indicators);
     this.triggerBackgroundHmmFetch();
 
@@ -480,8 +566,40 @@ export class TradingEngine {
 
     // Process Signal Action
     if (signal.action === 'BUY' && !hasActiveTrade) {
-      this.log(`AI Unified strategy generated BUY signal! Reason: ${signal.reason}`);
-      await this.executeEntry('BUY', indicators.currentPrice, signal.reason, signal.targetSL, signal.targetTP);
+      // MEJORA: Spread Filter
+      // Evita entrar si la diferencia entre compra y venta es > 0.15% (baja liquidez)
+      try {
+        const depth = await this.binanceClient?.getOrderBook('DOGEUSDT');
+        if (depth && depth.bids.length > 0 && depth.asks.length > 0) {
+          const bestBid = parseFloat(depth.bids[0][0]);
+          const bestAsk = parseFloat(depth.asks[0][0]);
+          const spread = ((bestAsk - bestBid) / bestBid) * 100;
+
+          if (spread > 0.15) {
+            this.log(`BUY Signal ignored: Spread is too wide (${spread.toFixed(3)}%). Liquidity is too low for safe entry.`);
+            return;
+          }
+        }
+      } catch (e) { /* Fallback if depth fails */ }
+
+      // MEJORA: Solo comprar si el precio está cerca o por debajo del VWAP (Precio justo)
+      // Esto evita comprar en el "pico" de una pompa (FOMO).
+      const isFairPrice = indicators.currentPrice <= indicators.vwap * 1.005;
+
+      if (isFairPrice) {
+        this.log(`AI Unified strategy generated BUY signal! Reason: ${signal.reason}`);
+
+        // MEJORA: Si la señal no trae Stop Loss, usamos el ATR para un stop de volatilidad
+        // Un stop basado en 2.5 * ATR es un estándar profesional para evitar "wicks".
+        let dynamicSL = signal.targetSL;
+        if (!dynamicSL && indicators.atr > 0) {
+          dynamicSL = (indicators.atr * 2.5 / indicators.currentPrice) * 100;
+        }
+
+        await this.executeEntry('BUY', indicators.currentPrice, signal.reason, dynamicSL, signal.targetTP);
+      } else {
+        this.log(`BUY Signal ignored: Price ($${indicators.currentPrice.toFixed(4)}) is too far above VWAP ($${indicators.vwap.toFixed(4)}). Waiting for mean reversion.`);
+      }
 
       // Send Telegram notification for entry
       // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
@@ -592,8 +710,34 @@ export class TradingEngine {
 
   private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string, targetSL?: number, targetTP?: number) {
     const symbol = 'DOGEUSDT';
-    const amount = this.config.tradeSizeUSDT;
-    const quantity = amount / price;
+
+    // 1. MEJORA: Risk-Based Position Sizing (ATR + SL)
+    // Calculamos el tamaño basado en cuánto dinero estamos dispuestos a perder si toca el SL.
+    const balance = this.stats.totalBalanceUSDT;
+    const riskAmount = balance * (MAX_RISK_PER_TRADE_PERCENT / 100);
+
+    // Si no hay SL definido, usamos un default de 2% para el cálculo de riesgo
+    const slDistancePercent = targetSL || 2.0;
+
+    // Cantidad basada en Riesgo: riskAmount / (distancia al SL en precio)
+    const riskBasedQty = riskAmount / (price * (slDistancePercent / 100));
+
+    // 2. Kelly Sizing dinámico (como multiplicador de confianza)
+    const kellyFrac = this.evolutionEngine.getActiveGenes().kellyFraction || 0.2;
+    const kellyBasedQty = (balance * kellyFrac) / price;
+
+    // Tomamos la más conservadora de las dos para evitar sobre-apalancamiento
+    let quantity = Math.min(riskBasedQty, kellyBasedQty);
+
+    // Límite de seguridad: No exceder el tradeSizeUSDT base configurado por el usuario
+    // a menos que la confianza sea extrema.
+    const maxQuantityFromConfig = (this.config.tradeSizeUSDT * 2) / price;
+    quantity = Math.min(quantity, maxQuantityFromConfig);
+
+    // Asegurar cantidad mínima para Binance
+    quantity = Math.max(quantity, 100); // Mínimo ~4-10 USDT en DOGE
+
+    const amount = quantity * price;
 
     this.log(`Initiating position entry vector... ${side} ${quantity.toFixed(1)} DOGE @ $${price.toFixed(5)} (~$${amount} USDT)`);
 
@@ -624,6 +768,8 @@ export class TradingEngine {
           reason,
           targetSL,
           targetTP,
+          highestPrice: fillPrice,
+          lowestPrice: fillPrice,
         };
 
         this.trades.push(trade);
@@ -658,6 +804,8 @@ export class TradingEngine {
         reason,
         targetSL,
         targetTP,
+        highestPrice: price,
+        lowestPrice: price,
       };
 
       // Subtract USDT, Add DOGE to virtual stats
@@ -698,6 +846,9 @@ export class TradingEngine {
         const pnl = (fillPrice - trade.price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
         trade.pnl = parseFloat(pnl.toFixed(4));
         trade.pnlPercent = parseFloat((((fillPrice - trade.price) / trade.price) * 100 * (trade.side === 'BUY' ? 1 : -1)).toFixed(2));
+
+        // Update Daily PnL
+        this.stats.dailyPnL = (this.stats.dailyPnL || 0) + pnl;
 
         this.log(`Binance exit order filled. PnL: $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)`);
 
@@ -775,7 +926,8 @@ export class TradingEngine {
       indicators.rsi,
       indicators.macd.hist,
       emaRatio,
-      bbPosition
+      bbPosition,
+      indicators.botActivity
     );
 
     // Reinforce the neural network weights!

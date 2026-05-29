@@ -174,6 +174,7 @@ export default function App() {
   const [editTradeSize, setEditTradeSize] = useState(50);
   const [editMode, setEditMode] = useState<'DEMO' | 'TESTNET' | 'REAL'>('DEMO');
   const [editMarketType, setEditMarketType] = useState<'SPOT' | 'FUTURES'>('SPOT');
+  const [editDailyProfitTarget, setEditDailyProfitTarget] = useState(75);
   const [editLeverage, setEditLeverage] = useState(5);
   const [editTelegramBotToken, setEditTelegramBotToken] = useState('');
   const [editTelegramChatId, setEditTelegramChatId] = useState('');
@@ -184,7 +185,7 @@ export default function App() {
   const isFirstLoadRef = useRef(true);
   const [isUpdatingConfig, setIsUpdatingConfig] = useState(false);
   const [isSendingSummary, setIsSendingSummary] = useState(false);
-  const [summaryFeedback, setSummaryFeedback] = useState<'idle'|'ok'|'err'>('idle');
+  const [summaryFeedback, setSummaryFeedback] = useState<'idle' | 'ok' | 'err'>('idle');
 
   // Success confetti trigger on trade win
   const lastTradeCount = useRef(0);
@@ -273,6 +274,7 @@ export default function App() {
       setEditTradeSize(config.tradeSizeUSDT);
       setEditMode(config.mode);
       setEditMarketType(config.marketType || 'SPOT');
+      setEditDailyProfitTarget(config.dailyProfitTarget || 75);
       setEditLeverage(config.leverage || 5);
       setEditTelegramBotToken(config.telegramBotToken || '');
       setEditTelegramChatId(config.telegramChatId || '');
@@ -288,6 +290,16 @@ export default function App() {
       await fetch(`${apiBase}/api/${endpoint}`, { method: 'POST' });
     } catch (e) {
       console.error(`Error toggling bot to ${endpoint}:`, e);
+    }
+  };
+
+  const emergencyLiquidation = async () => {
+    if (!window.confirm("🚨 ¿ESTÁS SEGURO? Esto cerrará TODAS las posiciones abiertas inmediatamente al precio de mercado.")) return;
+    const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+    try {
+      await fetch(`${apiBase}/api/emergency-close`, { method: 'POST' });
+    } catch (e) {
+      console.error('Error in emergency liquidation:', e);
     }
   };
 
@@ -307,6 +319,7 @@ export default function App() {
           binanceApiKey: editApiKey,
           binanceApiSecret: editApiSecret,
           marketType: editMarketType,
+          dailyProfitTarget: Number(editDailyProfitTarget),
           leverage: Number(editLeverage),
           telegramBotToken: editTelegramBotToken,
           telegramChatId: editTelegramChatId
@@ -715,10 +728,9 @@ export default function App() {
           {/* Center: live price */}
           <div className="flex flex-col items-center">
             <span className="text-[9px] text-slate-600 uppercase tracking-[0.15em] font-semibold">DOGE / USDT</span>
-            <span className={`text-xl font-bold font-mono tracking-tight transition-colors duration-200 ${
-              priceDirection === 'UP' ? 'text-neon-green' :
+            <span className={`text-xl font-bold font-mono tracking-tight transition-colors duration-200 ${priceDirection === 'UP' ? 'text-neon-green' :
               priceDirection === 'DOWN' ? 'text-neon-red' : 'text-white'
-            }`}>
+              }`}>
               ${indicators.currentPrice.toFixed(5)}
             </span>
           </div>
@@ -736,6 +748,15 @@ export default function App() {
             </div>
 
             <div className="w-px h-6 bg-white/10" />
+
+            {openTrades.length > 0 && (
+              <button
+                onClick={emergencyLiquidation}
+                className="btn-cyber border-red-500/50 text-red-400 hover:bg-red-500/20"
+              >
+                <Zap size={13} fill="currentColor" /> PANIC EXIT
+              </button>
+            )}
 
             <button
               onClick={toggleBot}
@@ -768,85 +789,85 @@ export default function App() {
           </div>
           <div className="grid grid-cols-5 gap-5">
 
-          {/* Portfolio Balance */}
-          <div className="cyber-card cyan-glow-border relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200">
-            <div className="card-accent-top accent-cyan-bar" />
-            <div className="flex justify-between items-start">
-              <span className="stat-label">Portfolio</span>
-              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.2)' }}>
-                <DollarSign size={13} className="text-neon-cyan" />
+            {/* Portfolio Balance */}
+            <div className="cyber-card cyan-glow-border relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200">
+              <div className="card-accent-top accent-cyan-bar" />
+              <div className="flex justify-between items-start">
+                <span className="stat-label">Portfolio</span>
+                <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.2)' }}>
+                  <DollarSign size={13} className="text-neon-cyan" />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="stat-value text-white">{formatCurrency(stats.totalBalanceUSDT + (stats.dogeBalance * indicators.currentPrice))}</div>
+                <p className="text-[10px] text-slate-600 mt-1 font-mono">
+                  {formatCurrency(stats.totalBalanceUSDT)} USDT
+                </p>
               </div>
             </div>
-            <div className="mt-2">
-              <div className="stat-value text-white">{formatCurrency(stats.totalBalanceUSDT + (stats.dogeBalance * indicators.currentPrice))}</div>
-              <p className="text-[10px] text-slate-600 mt-1 font-mono">
-                {formatCurrency(stats.totalBalanceUSDT)} USDT
-              </p>
-            </div>
-          </div>
 
-          {/* Net PnL */}
-          <div className="cyber-card pink-glow-border relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200">
-            <div className="card-accent-top accent-rose-bar" />
-            <div className="flex justify-between items-start">
-              <span className="stat-label">Net P&L</span>
-              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)' }}>
-                <TrendingUp size={13} className="text-neon-pink" />
+            {/* Net PnL */}
+            <div className="cyber-card pink-glow-border relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200">
+              <div className="card-accent-top accent-rose-bar" />
+              <div className="flex justify-between items-start">
+                <span className="stat-label">Net P&L</span>
+                <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)' }}>
+                  <TrendingUp size={13} className="text-neon-pink" />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className={`stat-value ${stats.netProfitUSDT >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {stats.netProfitUSDT >= 0 ? '+' : ''}{formatCurrency(stats.netProfitUSDT)}
+                </div>
+                <p className="text-[10px] text-slate-600 mt-1">Realized closed trades</p>
               </div>
             </div>
-            <div className="mt-2">
-              <div className={`stat-value ${stats.netProfitUSDT >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                {stats.netProfitUSDT >= 0 ? '+' : ''}{formatCurrency(stats.netProfitUSDT)}
-              </div>
-              <p className="text-[10px] text-slate-600 mt-1">Realized closed trades</p>
-            </div>
-          </div>
 
-          {/* Win Rate */}
-          <div className="cyber-card relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200 blue-glow-border">
-            <div className="card-accent-top accent-blue-bar" />
-            <div className="flex justify-between items-start">
-              <span className="stat-label">Win Rate</span>
-              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)' }}>
-                <Award size={13} className="text-blue-400" />
+            {/* Win Rate */}
+            <div className="cyber-card relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200 blue-glow-border">
+              <div className="card-accent-top accent-blue-bar" />
+              <div className="flex justify-between items-start">
+                <span className="stat-label">Win Rate</span>
+                <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)' }}>
+                  <Award size={13} className="text-blue-400" />
+                </div>
+              </div>
+              <div className="mt-2">
+                <div className="flex items-end gap-2">
+                  <div className="stat-value text-white">{stats.winRatePercent}%</div>
+                  <span className="badge badge-violet mb-1">🧠 AI</span>
+                </div>
+                <p className="text-[10px] text-slate-600 mt-1">{stats.winningTrades}W / {stats.losingTrades}L</p>
               </div>
             </div>
-            <div className="mt-2">
-              <div className="flex items-end gap-2">
-                <div className="stat-value text-white">{stats.winRatePercent}%</div>
-                <span className="badge badge-violet mb-1">🧠 AI</span>
+
+            <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
+              <div className="flex justify-between items-center text-slate-400">
+                <span className="text-xs uppercase tracking-wider font-semibold">Profit Factor</span>
+                <Percent size={16} className="text-slate-400" />
               </div>
-              <p className="text-[10px] text-slate-600 mt-1">{stats.winningTrades}W / {stats.losingTrades}L</p>
+              <div>
+                <h3 className="text-2xl font-bold text-white font-mono mt-2">
+                  {stats.profitFactor.toFixed(2)}x
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">Gains / Losses ratio</p>
+              </div>
             </div>
-          </div>
 
-          <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-xs uppercase tracking-wider font-semibold">Profit Factor</span>
-              <Percent size={16} className="text-slate-400" />
+            <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
+              <div className="flex justify-between items-center text-slate-400">
+                <span className="text-xs uppercase tracking-wider font-semibold">Active Orders Vector</span>
+                <Activity size={16} className="text-neon-green" />
+              </div>
+              <div>
+                <h3 className="text-2xl font-bold text-white font-mono mt-2">
+                  {openTrades.length} Trades
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Current DCA exposure: {formatCurrency(openTrades.reduce((sum, t) => sum + t.amount, 0))}
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-2xl font-bold text-white font-mono mt-2">
-                {stats.profitFactor.toFixed(2)}x
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">Gains / Losses ratio</p>
-            </div>
-          </div>
-
-          <div className="cyber-card flex flex-col justify-between min-h-[110px] hover:translate-y-[-2px] transition-transform duration-300 bg-black/40 backdrop-blur-md">
-            <div className="flex justify-between items-center text-slate-400">
-              <span className="text-xs uppercase tracking-wider font-semibold">Active Orders Vector</span>
-              <Activity size={16} className="text-neon-green" />
-            </div>
-            <div>
-              <h3 className="text-2xl font-bold text-white font-mono mt-2">
-                {openTrades.length} Trades
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Current DCA exposure: {formatCurrency(openTrades.reduce((sum, t) => sum + t.amount, 0))}
-              </p>
-            </div>
-          </div>
           </div>
         </section>
 
@@ -859,38 +880,38 @@ export default function App() {
           </div>
           <div className="dashboard-grid">
 
-          {/* COLUMN 1: CHART PANEL */}
-          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
-            <div className="flex items-center justify-between border-b border-white/5 pb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Activity size={16} className="text-neon-cyan animate-pulse" /> Real-time Price Grid & Technical Overlay
-              </h2>
-              <div className="flex gap-3 text-xs text-slate-400 font-mono">
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400" /> EMA 20</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-pink-500" /> EMA 50</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-900" /> BB Bands</span>
+            {/* COLUMN 1: CHART PANEL */}
+            <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Activity size={16} className="text-neon-cyan animate-pulse" /> Real-time Price Grid & Technical Overlay
+                </h2>
+                <div className="flex gap-3 text-xs text-slate-400 font-mono">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400" /> EMA 20</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-pink-500" /> EMA 50</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-900" /> BB Bands</span>
+                </div>
+              </div>
+              <div className="chart-container">
+                {renderCandlestickChart()}
               </div>
             </div>
-            <div className="chart-container">
-              {renderCandlestickChart()}
-            </div>
-          </div>
 
-          {/* Neural Network */}
-          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
-            <div className="flex items-center justify-between border-b border-white/5 pb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Cpu size={16} className="text-neon-pink" /> AI Neural Core Weight & Synapses Visualizer
-              </h2>
-              <span className="text-[10px] bg-pink-500/10 border border-pink-500/30 text-neon-pink px-2 py-0.5 rounded font-mono">
-                REINFORCEMENT LEARNING ONLINE
-              </span>
-            </div>
-            <div className="nn-container">
-              {renderNeuralNetwork()}
+            {/* Neural Network */}
+            <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Cpu size={16} className="text-neon-pink" /> AI Neural Core Weight & Synapses Visualizer
+                </h2>
+                <span className="text-[10px] bg-pink-500/10 border border-pink-500/30 text-neon-pink px-2 py-0.5 rounded font-mono">
+                  REINFORCEMENT LEARNING ONLINE
+                </span>
+              </div>
+              <div className="nn-container">
+                {renderNeuralNetwork()}
+              </div>
             </div>
           </div>
-        </div>
         </section>
 
         {/* ── SECTOR 3: BOT CONFIGURATION ── */}
@@ -901,228 +922,227 @@ export default function App() {
             <div className="flex-1 h-px bg-white/5" />
           </div>
           <div className="grid grid-cols-2 gap-6">
-          {/* Left: settings form */}
-          <div className="cyber-card flex flex-col gap-5 bg-black/40 backdrop-blur-md">
-            <div className="border-b border-white/5 pb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Layers size={16} className="text-neon-cyan" /> Strategy Control Matrix
-              </h2>
-            </div>
-
-            <form onSubmit={saveConfiguration} className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-slate-400 font-semibold uppercase">Execution Environment</label>
-                  <select
-                    value={editMode}
-                    onChange={(e) => setEditMode(e.target.value as any)}
-                    className="cyber-input cyber-select text-xs font-bold"
-                  >
-                    <option value="DEMO">SIMULATED DEMO (NO RISK)</option>
-                    <option value="TESTNET">BINANCE TESTNET (PAPER TRADING)</option>
-                    <option value="REAL">BINANCE REAL ACCOUNT</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-slate-400 font-semibold uppercase">AI Trading Model</label>
-                  <div className="cyber-input text-xs font-bold bg-white/5 border-white/10 text-slate-400 cursor-not-allowed flex items-center h-[34px]">
-                    🧠 UNIFIED GEMINI SMC ENGINE
-                  </div>
-                </div>
+            {/* Left: settings form */}
+            <div className="cyber-card flex flex-col gap-5 bg-black/40 backdrop-blur-md">
+              <div className="border-b border-white/5 pb-3">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Layers size={16} className="text-neon-cyan" /> Strategy Control Matrix
+                </h2>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-slate-400 font-semibold uppercase">Market Type</label>
-                  <select
-                    value={editMarketType}
-                    onChange={(e) => setEditMarketType(e.target.value as any)}
-                    className="cyber-input cyber-select text-xs font-bold"
-                  >
-                    <option value="SPOT">SPOT (AL CONTADO)</option>
-                    <option value="FUTURES">FUTURES (USDⓈ-M)</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-slate-400 font-semibold uppercase">Leverage (Apalancamiento)</label>
-                  <select
-                    value={editLeverage}
-                    onChange={(e) => setEditLeverage(Number(e.target.value))}
-                    disabled={editMarketType !== 'FUTURES'}
-                    className="cyber-input cyber-select text-xs font-bold font-mono"
-                  >
-                    <option value={1}>1x (No Leverage)</option>
-                    <option value={2}>2x (Low Risk)</option>
-                    <option value={5}>5x (Standard Risk)</option>
-                    <option value={10}>10x (High Risk)</option>
-                    <option value={20}>20x (Extreme Risk)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-slate-400 font-semibold uppercase">Trade Size (USDT)</label>
-                  <input
-                    type="number"
-                    value={editTradeSize}
-                    onChange={(e) => setEditTradeSize(Number(e.target.value))}
-                    min="5"
-                    max="1000"
-                    className="cyber-input text-xs font-mono"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] text-purple-400 font-bold uppercase flex items-center gap-1">
-                    <Key size={12} /> Gemini API Key
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="AI_..."
-                    value={editGeminiApiKey}
-                    onChange={(e) => setEditGeminiApiKey(e.target.value)}
-                    className="cyber-input text-xs font-mono border-purple-500/30 focus:border-purple-500"
-                  />
-                </div>
-              </div>
-
-              {/* API Keys Configuration (only shown if not in DEMO mode) */}
-              {editMode !== 'DEMO' && (
-                <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
-                  <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-pink">
-                    <Key size={14} /> BINANCE CONFIGURATION SECURE SHIELD
+              <form onSubmit={saveConfiguration} className="flex flex-col gap-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-slate-400 font-semibold uppercase">Execution Environment</label>
+                    <select
+                      value={editMode}
+                      onChange={(e) => setEditMode(e.target.value as any)}
+                      className="cyber-input cyber-select text-xs font-bold"
+                    >
+                      <option value="DEMO">SIMULATED DEMO (NO RISK)</option>
+                      <option value="TESTNET">BINANCE TESTNET (PAPER TRADING)</option>
+                      <option value="REAL">BINANCE REAL ACCOUNT</option>
+                    </select>
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance API Key</label>
+                    <label className="text-xs text-slate-400 font-semibold uppercase">AI Trading Model</label>
+                    <div className="cyber-input text-xs font-bold bg-white/5 border-white/10 text-slate-400 cursor-not-allowed flex items-center h-[34px]">
+                      🧠 UNIFIED GEMINI SMC ENGINE
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-slate-400 font-semibold uppercase">Market Type</label>
+                    <select
+                      value={editMarketType}
+                      onChange={(e) => setEditMarketType(e.target.value as any)}
+                      className="cyber-input cyber-select text-xs font-bold"
+                    >
+                      <option value="SPOT">SPOT (AL CONTADO)</option>
+                      <option value="FUTURES">FUTURES (USDⓈ-M)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-slate-400 font-semibold uppercase">Leverage (Apalancamiento)</label>
+                    <select
+                      value={editLeverage}
+                      onChange={(e) => setEditLeverage(Number(e.target.value))}
+                      disabled={editMarketType !== 'FUTURES'}
+                      className="cyber-input cyber-select text-xs font-bold font-mono"
+                    >
+                      <option value={1}>1x (No Leverage)</option>
+                      <option value={2}>2x (Low Risk)</option>
+                      <option value={5}>5x (Standard Risk)</option>
+                      <option value={10}>10x (High Risk)</option>
+                      <option value={20}>20x (Extreme Risk)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs text-slate-400 font-semibold uppercase">Trade Size (USDT)</label>
                     <input
-                      type="text"
-                      placeholder="Enter API Key"
-                      value={editApiKey}
-                      onChange={(e) => setEditApiKey(e.target.value)}
+                      type="number"
+                      value={editTradeSize}
+                      onChange={(e) => setEditTradeSize(Number(e.target.value))}
+                      min="5"
+                      max="1000"
                       className="cyber-input text-xs font-mono"
                     />
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance Secret Key</label>
+                    <label className="text-[10px] text-purple-400 font-bold uppercase flex items-center gap-1">
+                      <Key size={12} /> Gemini API Key
+                    </label>
                     <input
                       type="password"
-                      placeholder="••••••••••••••••••••••••••••••••"
-                      value={editApiSecret}
-                      onChange={(e) => setEditApiSecret(e.target.value)}
+                      placeholder="AI_..."
+                      value={editGeminiApiKey}
+                      onChange={(e) => setEditGeminiApiKey(e.target.value)}
+                      className="cyber-input text-xs font-mono border-purple-500/30 focus:border-purple-500"
+                    />
+                  </div>
+                </div>
+
+                {/* API Keys Configuration (only shown if not in DEMO mode) */}
+                {editMode !== 'DEMO' && (
+                  <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
+                    <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-pink">
+                      <Key size={14} /> BINANCE CONFIGURATION SECURE SHIELD
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance API Key</label>
+                      <input
+                        type="text"
+                        placeholder="Enter API Key"
+                        value={editApiKey}
+                        onChange={(e) => setEditApiKey(e.target.value)}
+                        className="cyber-input text-xs font-mono"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance Secret Key</label>
+                      <input
+                        type="password"
+                        placeholder="••••••••••••••••••••••••••••••••"
+                        value={editApiSecret}
+                        onChange={(e) => setEditApiSecret(e.target.value)}
+                        className="cyber-input text-xs font-mono"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed">
+                      Keys are processed completely in your local computer terminal. Never shared or uploaded externally. Ensure spot or futures trading permissions are active depending on market type.
+                    </p>
+                  </div>
+                )}
+
+                {/* Telegram Notifications Configuration */}
+                <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
+                  <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-cyan">
+                    <Send size={14} className="telegram-icon" /> TELEGRAM NOTIFICATIONS
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Telegram Bot Token</label>
+                    <input
+                      type="text"
+                      placeholder="Enter your Telegram Bot Token (e.g., 123456:ABC-DEF...)"
+                      value={editTelegramBotToken}
+                      onChange={(e) => setEditTelegramBotToken(e.target.value)}
+                      className="cyber-input text-xs font-mono"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Telegram Chat ID</label>
+                    <input
+                      type="text"
+                      placeholder="Enter your Telegram Chat ID (e.g., -123456789)"
+                      value={editTelegramChatId}
+                      onChange={(e) => setEditTelegramChatId(e.target.value)}
                       className="cyber-input text-xs font-mono"
                     />
                   </div>
                   <p className="text-[10px] text-slate-500 leading-relaxed">
-                    Keys are processed completely in your local computer terminal. Never shared or uploaded externally. Ensure spot or futures trading permissions are active depending on market type.
+                    Get real-time trade notifications. Create a bot with @BotFather and get your chat ID from @get_id_bot.
                   </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={sendTestTelegramMessage}
+                      className="flex-1 btn-cyber justify-center text-xs tracking-wider bg-cyan-500/10 border-cyan-500/30 text-neon-cyan hover:bg-cyan-500/20"
+                    >
+                      <Send size={13} /> TEST
+                    </button>
+                    <button
+                      type="button"
+                      onClick={sendSummaryNow}
+                      disabled={isSendingSummary}
+                      className={`flex-1 btn-cyber justify-center text-xs tracking-wider ${summaryFeedback === 'ok' ? 'bg-green-500/20 border-green-500/40 text-neon-green' :
+                        summaryFeedback === 'err' ? 'bg-red-500/20 border-red-500/40 text-neon-red' :
+                          'bg-violet-500/10 border-violet-500/30 text-violet-300 hover:bg-violet-500/20'
+                        }`}
+                    >
+                      {isSendingSummary ? <Loader2 size={13} className="animate-spin" /> : <Bell size={13} />}
+                      {summaryFeedback === 'ok' ? '¡ENVIADO!' : summaryFeedback === 'err' ? 'ERROR' : 'ENVIAR AHORA'}
+                    </button>
+                  </div>
                 </div>
-              )}
 
-              {/* Telegram Notifications Configuration */}
-              <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
-                <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-cyan">
-                  <Send size={14} className="telegram-icon" /> TELEGRAM NOTIFICATIONS
-                </div>
+                <button
+                  type="submit"
+                  disabled={isUpdatingConfig}
+                  className="btn-cyber btn-cyber-primary justify-center text-xs tracking-wider"
+                >
+                  {isUpdatingConfig ? (
+                    <>
+                      <Loader2 className="animate-spin" size={14} /> SYNCHRONIZING SYSTEM...
+                    </>
+                  ) : (
+                    <>
+                      <Shield size={14} /> COMPILING STRATEGY MATRIX
+                    </>
+                  )}
+                </button>
+              </form>
+            </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] text-slate-400 font-semibold uppercase">Telegram Bot Token</label>
-                  <input
-                    type="text"
-                    placeholder="Enter your Telegram Bot Token (e.g., 123456:ABC-DEF...)"
-                    value={editTelegramBotToken}
-                    onChange={(e) => setEditTelegramBotToken(e.target.value)}
-                    className="cyber-input text-xs font-mono"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] text-slate-400 font-semibold uppercase">Telegram Chat ID</label>
-                  <input
-                    type="text"
-                    placeholder="Enter your Telegram Chat ID (e.g., -123456789)"
-                    value={editTelegramChatId}
-                    onChange={(e) => setEditTelegramChatId(e.target.value)}
-                    className="cyber-input text-xs font-mono"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  Get real-time trade notifications. Create a bot with @BotFather and get your chat ID from @get_id_bot.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={sendTestTelegramMessage}
-                    className="flex-1 btn-cyber justify-center text-xs tracking-wider bg-cyan-500/10 border-cyan-500/30 text-neon-cyan hover:bg-cyan-500/20"
-                  >
-                    <Send size={13} /> TEST
-                  </button>
-                  <button
-                    type="button"
-                    onClick={sendSummaryNow}
-                    disabled={isSendingSummary}
-                    className={`flex-1 btn-cyber justify-center text-xs tracking-wider ${
-                      summaryFeedback === 'ok' ? 'bg-green-500/20 border-green-500/40 text-neon-green' :
-                      summaryFeedback === 'err' ? 'bg-red-500/20 border-red-500/40 text-neon-red' :
-                      'bg-violet-500/10 border-violet-500/30 text-violet-300 hover:bg-violet-500/20'
-                    }`}
-                  >
-                    {isSendingSummary ? <Loader2 size={13} className="animate-spin" /> : <Bell size={13} />}
-                    {summaryFeedback === 'ok' ? '¡ENVIADO!' : summaryFeedback === 'err' ? 'ERROR' : 'ENVIAR AHORA'}
-                  </button>
-                </div>
+            {/* Right: Terminal logs */}
+            <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Terminal size={16} className="text-neon-cyan" /> Neural Decision Stream & Execution Log
+                </h2>
+                <span className="text-[10px] text-slate-500 font-mono">AUTOSCROLLING</span>
               </div>
 
-              <button
-                type="submit"
-                disabled={isUpdatingConfig}
-                className="btn-cyber btn-cyber-primary justify-center text-xs tracking-wider"
-              >
-                {isUpdatingConfig ? (
-                  <>
-                    <Loader2 className="animate-spin" size={14} /> SYNCHRONIZING SYSTEM...
-                  </>
-                ) : (
-                  <>
-                    <Shield size={14} /> COMPILING STRATEGY MATRIX
-                  </>
+              <div className="terminal-console">
+                {logs.map((log, idx) => {
+                  let colorClass = 'text-slate-300';
+                  if (log.includes('BUY') || log.includes('filled')) colorClass = 'text-neon-green border-l-2 border-neon-green pl-2 bg-green-500/5 py-0.5 rounded-r';
+                  else if (log.includes('SELL') || log.includes('closed')) colorClass = 'text-neon-red border-l-2 border-neon-red pl-2 bg-red-500/5 py-0.5 rounded-r';
+                  else if (log.includes('WARNING') || log.includes('ERROR') || log.includes('issue')) colorClass = 'text-neon-pink border-l-2 border-neon-pink pl-2 bg-pink-500/5 py-0.5 rounded-r';
+                  else if (log.includes('reinforced')) colorClass = 'text-neon-cyan font-semibold';
+
+                  return (
+                    <div key={idx} className={`terminal-line ${colorClass}`}>
+                      {log}
+                    </div>
+                  );
+                })}
+                {logs.length === 0 && (
+                  <div className="text-slate-600 italic">Waiting for quantum state stream...</div>
                 )}
-              </button>
-            </form>
-          </div>
-
-          {/* Right: Terminal logs */}
-          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
-            <div className="flex items-center justify-between border-b border-white/5 pb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Terminal size={16} className="text-neon-cyan" /> Neural Decision Stream & Execution Log
-              </h2>
-              <span className="text-[10px] text-slate-500 font-mono">AUTOSCROLLING</span>
+              </div>
             </div>
-
-            <div className="terminal-console">
-              {logs.map((log, idx) => {
-                let colorClass = 'text-slate-300';
-                if (log.includes('BUY') || log.includes('filled')) colorClass = 'text-neon-green border-l-2 border-neon-green pl-2 bg-green-500/5 py-0.5 rounded-r';
-                else if (log.includes('SELL') || log.includes('closed')) colorClass = 'text-neon-red border-l-2 border-neon-red pl-2 bg-red-500/5 py-0.5 rounded-r';
-                else if (log.includes('WARNING') || log.includes('ERROR') || log.includes('issue')) colorClass = 'text-neon-pink border-l-2 border-neon-pink pl-2 bg-pink-500/5 py-0.5 rounded-r';
-                else if (log.includes('reinforced')) colorClass = 'text-neon-cyan font-semibold';
-
-                return (
-                  <div key={idx} className={`terminal-line ${colorClass}`}>
-                    {log}
-                  </div>
-                );
-              })}
-              {logs.length === 0 && (
-                <div className="text-slate-600 italic">Waiting for quantum state stream...</div>
-              )}
-            </div>
-          </div>
           </div>
         </section>
 

@@ -19,16 +19,18 @@ export class GemmaService {
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.ai = new GoogleGenAI({ apiKey });
-      console.log(`[GemmaService] Initialized with API key using model: ${this.modelName}`);
+      console.log(`[GemmaService] ✅ Initialized with API key from ENV using model: ${this.modelName}`);
     } else {
-      console.warn('[GemmaService] Warning: GEMINI_API_KEY not found in environment variables. Unified AI strategy will fall back to HOLD.');
+      console.warn('[GemmaService] ⚠️ Warning: GEMINI_API_KEY not found in environment variables.');
     }
   }
 
   updateApiKey(apiKey: string) {
     if (apiKey) {
       this.ai = new GoogleGenAI({ apiKey });
-      console.log(`[GemmaService] API key updated dynamically.`);
+      console.log(`[GemmaService] ✅ API key updated dynamically from UI.`);
+    } else {
+      console.error(`[GemmaService] ❌ Attempted to update with empty API key.`);
     }
   }
 
@@ -80,7 +82,7 @@ export class GemmaService {
         const avgBodySize = candles.reduce((sum, c) => sum + Math.abs(c.close - c.open), 0) / candles.length;
         for (let i = 1; i < candles.length; i++) {
           const bodySize = Math.abs(candles[i].close - candles[i].open);
-          
+
           // Bullish OB: strong up close breaking previous high
           if (candles[i].close > candles[i].open && bodySize > avgBodySize && candles[i].close > candles[i - 1].high && candles[i - 1].close < candles[i - 1].open) {
             orderBlocks.push({
@@ -198,13 +200,13 @@ Your response must be a single, raw JSON object (with no markdown wrappers, no b
       }
 
       const signal: GemmaSignal = JSON.parse(cleanText);
-      
+
       // Validate response structure
-      if (['BUY', 'SELL', 'HOLD'].includes(signal.action) && 
-          typeof signal.confidence === 'number' && 
-          typeof signal.stopLossPercent === 'number' && 
-          typeof signal.takeProfitPercent === 'number' && 
-          typeof signal.reason === 'string') {
+      if (['BUY', 'SELL', 'HOLD'].includes(signal.action) &&
+        typeof signal.confidence === 'number' &&
+        typeof signal.stopLossPercent === 'number' &&
+        typeof signal.takeProfitPercent === 'number' &&
+        typeof signal.reason === 'string') {
         return signal;
       }
 

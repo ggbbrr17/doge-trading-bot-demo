@@ -161,6 +161,20 @@ export class BinanceClient {
     }
   }
 
+  // Public endpoint: Get Order Book (Depth)
+  async getOrderBook(symbol: string, limit: number = 5): Promise<{ bids: [string, string][], asks: [string, string][] }> {
+    const endpoint = this.isFutures ? '/fapi/v1/depth' : '/api/v3/depth';
+    const url = `${this.baseUrl}${endpoint}?symbol=${symbol.toUpperCase()}&limit=${limit}`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching order book:', error);
+      throw error;
+    }
+  }
+
   // Private endpoint: Get account balances
   async getAccountInfo(): Promise<any> {
     const endpoint = this.isFutures ? '/fapi/v2/account' : '/api/v3/account';

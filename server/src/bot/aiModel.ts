@@ -23,7 +23,7 @@ export class CustomNeuralNetwork {
   private lastOutputs: number[] = [];
 
   constructor(
-    inputSize = 4,
+    inputSize = 5,
     hiddenSize = 8,
     outputSize = 2,
     learningRate = 0.1
@@ -170,13 +170,15 @@ export class CustomNeuralNetwork {
     rsi: number,
     macdHist: number,
     emaRatio: number, // short_ema / long_ema
-    bbPosition: number // where current price is relative to BB: (price - lower) / (upper - lower)
+    bbPosition: number, // where current price is relative to BB: (price - lower) / (upper - lower)
+    botActivity: number // Normalized index of detected bot mass movements
   ): number[] {
     return [
       (rsi - 50) / 50, // Normalize 0..100 to -1..1
       Math.max(-1, Math.min(1, macdHist * 100)), // MACD Hist scaled
       (emaRatio - 1.0) * 100, // Percentage difference
       bbPosition * 2 - 1, // Scale 0..1 to -1..1
+      Math.min(1, botActivity / 5) * 2 - 1 // Scale 0..5+ to -1..1
     ];
   }
 }

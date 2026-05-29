@@ -13,11 +13,11 @@ def fetch_data(symbol="DOGE-USD", period="1y"):
         raise ValueError(f"No data found for {symbol}")
     # Handle multi-index columns from yfinance
     if isinstance(df.columns, pd.MultiIndex):
-        closes = df['Close'][symbol].values
-        volumes = df['Volume'][symbol].values
+        closes = df['Close'][symbol].values.flatten()
+        volumes = df['Volume'][symbol].values.flatten()
     else:
-        closes = df['Close'].values
-        volumes = df['Volume'].values
+        closes = df['Close'].values.flatten()
+        volumes = df['Volume'].values.flatten()
     return closes, volumes
 
 def prepare_features(closes, volumes):
@@ -48,26 +48,30 @@ def train_hmm(X, n_components=3):
 
 def interpret_regimes(model, X):
     # This is a heuristic way to interpret regimes based on their means and variances
-    means = model.means_[:, 0] # Mean of returns
+    # Ensure we are working with 1D arrays of scalars
+    means = np.array(model.means_[:, 0]).ravel()
     
     # Handle diagonal covariance shape (n_components, n_features)
     # We take the first feature (returns) variance
-    variances = model.covars_[:, 0]
+    variances = np.array(model.covars_[:, 0]).ravel()
+    median_var = float(np.median(variances))
     
     regimes = {}
-    for i in range(model.n_components):
-        if means[i] > 0 and variances[i] < np.median(variances):
+    for i in range(len(means)):
+        m = float(means[i])
+        v = float(variances[i])
+        
+        if m > 0 and v < median_var:
             regimes[i] = "TREND_BULL"
-        elif means[i] < 0 and variances[i] < np.median(variances):
+        elif m < 0 and v < median_var:
             regimes[i] = "TREND_BEAR"
         else:
             regimes[i] = "RANGE" # High variance or near-zero mean
             
     # Fallback to simple sorting if logic is ambiguous
-    # Order by variance (volatility)
     sorted_by_vol = np.argsort(variances)
     if len(regimes) < model.n_components:
-        regimes[sorted_by_vol[0]] = "TREND_BULL" if means[sorted_by_vol[0]] > 0 else "TREND_BEAR"
+        regimes[sorted_by_vol[0]] = "TREND_BULL" if float(means[sorted_by_vol[0]]) > 0 else "TREND_BEAR"
         regimes[sorted_by_vol[1]] = "RANGE"
         regimes[sorted_by_vol[-1]] = "HIGH_VOLATILITY"
         
@@ -78,10 +82,12 @@ def main():
         input_data = sys.stdin.read().strip()
         if input_data:
             data = json.loads(input_data)
-            closes = np.array(data.get("closes", []))
-            volumes = np.array(data.get("volumes", []))
-            if len(closes) < 10:
-                 raise ValueError("Not enough data provided.")
+            closes = np.array(data.get("closes", [])).flatten()
+            volumes = np.array(data.get("volumes", [])).flatten()
+            
+            # Si los datos vienen incompletos por alguna razón, fallback a yfinance
+            if len(closes) < 30:
+                closes, volumes = fetch_data()
         else:
             closes, volumes = fetch_data()
             
