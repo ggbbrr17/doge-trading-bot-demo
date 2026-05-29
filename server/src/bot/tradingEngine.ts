@@ -916,6 +916,12 @@ export class TradingEngine {
     }
   }
 
+  /** Fuerza el envío inmediato del reporte de Telegram y reinicia el contador de 3h */
+  public async sendSummaryNow() {
+    this.lastSummaryTime = 0; // Reset so sendPeriodicSummary fires right away
+    await this.sendPeriodicSummary();
+  }
+
   private async sendPeriodicSummary() {
     const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
     const now = Date.now();

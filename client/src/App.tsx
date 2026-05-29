@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Play, Square, Bot, TrendingUp, Cpu, Settings, Shield,
   Terminal, Activity, DollarSign, Percent, Award,
-  Key, Loader2, Sparkles, Send
+  Key, Loader2, Sparkles, Send, Bell, Zap, BarChart2, Layers
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -183,6 +183,8 @@ export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const isFirstLoadRef = useRef(true);
   const [isUpdatingConfig, setIsUpdatingConfig] = useState(false);
+  const [isSendingSummary, setIsSendingSummary] = useState(false);
+  const [summaryFeedback, setSummaryFeedback] = useState<'idle'|'ok'|'err'>('idle');
 
   // Success confetti trigger on trade win
   const lastTradeCount = useRef(0);
@@ -356,13 +358,28 @@ export default function App() {
       alert('Por favor, introduce el Token del Bot y el Chat ID de Telegram.');
       return;
     }
-    // Usamos una URL dinámica para que funcione en Render/Netlify
     const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
     await fetch(`${apiBase}/api/send-telegram-test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: editTelegramBotToken, chatId: editTelegramChatId })
     });
+  };
+
+  // Enviar resumen completo ahora
+  const sendSummaryNow = async () => {
+    setIsSendingSummary(true);
+    setSummaryFeedback('idle');
+    const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+    try {
+      const res = await fetch(`${apiBase}/api/send-telegram-summary`, { method: 'POST' });
+      setSummaryFeedback(res.ok ? 'ok' : 'err');
+    } catch {
+      setSummaryFeedback('err');
+    } finally {
+      setIsSendingSummary(false);
+      setTimeout(() => setSummaryFeedback('idle'), 4000);
+    }
   };
 
   // Helper formatting values
@@ -740,10 +757,16 @@ export default function App() {
       </header>
 
       {/* DASHBOARD BODY */}
-      <main className="max-w-[1600px] w-full mx-auto px-5 pt-20 pb-20 flex-grow">
+      <main className="max-w-[1600px] w-full mx-auto px-6 pt-20 pb-24 flex-grow flex flex-col gap-8">
 
-        {/* STATS MATRIX */}
-        <section className="grid grid-cols-5 gap-4 mb-5 mt-4">
+        {/* ── SECTOR 1: KPIs ── */}
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <BarChart2 size={15} className="text-slate-500" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Portfolio Overview</span>
+            <div className="flex-1 h-px bg-white/5" />
+          </div>
+          <div className="grid grid-cols-5 gap-5">
 
           {/* Portfolio Balance */}
           <div className="cyber-card cyan-glow-border relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200">
@@ -824,10 +847,17 @@ export default function App() {
               </p>
             </div>
           </div>
+          </div>
         </section>
 
-        {/* INTERACTIVE PANELS GRID */}
-        <section className="dashboard-grid">
+        {/* ── SECTOR 2: MARKET ANALYSIS ── */}
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <Activity size={15} className="text-slate-500" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Market Analysis</span>
+            <div className="flex-1 h-px bg-white/5" />
+          </div>
+          <div className="dashboard-grid">
 
           {/* COLUMN 1: CHART PANEL */}
           <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
@@ -846,7 +876,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* COLUMN 2: NEURAL NETWORK VISUALIZER */}
+          {/* Neural Network */}
           <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
             <div className="flex items-center justify-between border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
@@ -860,12 +890,22 @@ export default function App() {
               {renderNeuralNetwork()}
             </div>
           </div>
+        </div>
+        </section>
 
-          {/* COLUMN 1: CONTROL PANEL & API */}
-          <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
+        {/* ── SECTOR 3: BOT CONFIGURATION ── */}
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <Settings size={15} className="text-slate-500" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Bot Configuration</span>
+            <div className="flex-1 h-px bg-white/5" />
+          </div>
+          <div className="grid grid-cols-2 gap-6">
+          {/* Left: settings form */}
+          <div className="cyber-card flex flex-col gap-5 bg-black/40 backdrop-blur-md">
             <div className="border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Settings size={16} className="text-neon-cyan" /> Autonomous strategy control matrix
+                <Layers size={16} className="text-neon-cyan" /> Strategy Control Matrix
               </h2>
             </div>
 
@@ -1013,13 +1053,28 @@ export default function App() {
                 <p className="text-[10px] text-slate-500 leading-relaxed">
                   Get real-time trade notifications. Create a bot with @BotFather and get your chat ID from @get_id_bot.
                 </p>
-                <button
-                  type="button"
-                  onClick={sendTestTelegramMessage}
-                  className="btn-cyber justify-center text-xs tracking-wider bg-cyan-500/10 border-cyan-500/30 text-neon-cyan hover:bg-cyan-500/20"
-                >
-                  <Send size={14} /> SEND TEST MESSAGE
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={sendTestTelegramMessage}
+                    className="flex-1 btn-cyber justify-center text-xs tracking-wider bg-cyan-500/10 border-cyan-500/30 text-neon-cyan hover:bg-cyan-500/20"
+                  >
+                    <Send size={13} /> TEST
+                  </button>
+                  <button
+                    type="button"
+                    onClick={sendSummaryNow}
+                    disabled={isSendingSummary}
+                    className={`flex-1 btn-cyber justify-center text-xs tracking-wider ${
+                      summaryFeedback === 'ok' ? 'bg-green-500/20 border-green-500/40 text-neon-green' :
+                      summaryFeedback === 'err' ? 'bg-red-500/20 border-red-500/40 text-neon-red' :
+                      'bg-violet-500/10 border-violet-500/30 text-violet-300 hover:bg-violet-500/20'
+                    }`}
+                  >
+                    {isSendingSummary ? <Loader2 size={13} className="animate-spin" /> : <Bell size={13} />}
+                    {summaryFeedback === 'ok' ? '¡ENVIADO!' : summaryFeedback === 'err' ? 'ERROR' : 'ENVIAR AHORA'}
+                  </button>
+                </div>
               </div>
 
               <button
@@ -1040,7 +1095,7 @@ export default function App() {
             </form>
           </div>
 
-          {/* COLUMN 2: RETRO CONSOLE LOGS TERMINAL */}
+          {/* Right: Terminal logs */}
           <div className="cyber-card flex flex-col gap-4 bg-black/40 backdrop-blur-md">
             <div className="flex items-center justify-between border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
@@ -1068,9 +1123,17 @@ export default function App() {
               )}
             </div>
           </div>
+          </div>
+        </section>
 
-          {/* AI MATHEMATICAL EVOLUTION & DYNAMIC FORMULA CORE */}
-          <div className="cyber-card dashboard-row-full flex flex-col gap-6 border border-pink-500/20 bg-gradient-to-r from-slate-950/80 via-black/80 to-slate-950/80 shadow-[0_0_20px_rgba(244,63,94,0.05)]">
+        {/* ── SECTOR 4: AI EVOLUTION ENGINE ── */}
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <Sparkles size={15} className="text-slate-500" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">AI Genetic Evolution Engine</span>
+            <div className="flex-1 h-px bg-white/5" />
+          </div>
+          <div className="cyber-card flex flex-col gap-6 border border-pink-500/20 bg-gradient-to-r from-slate-950/80 via-black/80 to-slate-950/80 shadow-[0_0_20px_rgba(244,63,94,0.05)]">
             <div className="flex items-center justify-between border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Sparkles size={16} className="text-neon-pink animate-pulse" /> AI Genetic Formula Generator & Optimization Engine
@@ -1146,15 +1209,23 @@ export default function App() {
               </div>
             </div>
           </div>
+        </section>
 
-          {/* ROW FULL: TRADES LIST SECTION */}
-          <div className="cyber-card dashboard-row-full flex flex-col gap-4">
+        {/* ── SECTOR 5: TRANSACTION LEDGER ── */}
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <Zap size={15} className="text-slate-500" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Transaction Ledger</span>
+            <div className="flex-1 h-px bg-white/5" />
+            <span className="text-[10px] text-slate-600 font-mono">{trades.length} total · {closedTrades.length} completed</span>
+          </div>
+          <div className="cyber-card flex flex-col gap-4">
             <div className="flex items-center justify-between border-b border-white/5 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <Activity size={16} className="text-neon-green" /> Bot Transaction Ledger (Active & Completed Operations)
+                <Activity size={16} className="text-neon-green" /> Active & Completed Operations
               </h2>
-              <span className="text-xs text-slate-400">
-                Total operations logged: {trades.length} | Completed: {closedTrades.length}
+              <span className="text-xs text-slate-400 font-mono">
+                Open: {openTrades.length} · Win Rate: {stats.winRatePercent}%
               </span>
             </div>
 
@@ -1250,8 +1321,8 @@ export default function App() {
               </table>
             </div>
           </div>
-
         </section>
+
       </main>
 
       {/* MINIMALIST FIXED FOOTER */}

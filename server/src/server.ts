@@ -109,6 +109,15 @@ app.post('/api/send-telegram-test', (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/send-telegram-summary', async (req: Request, res: Response) => {
+  try {
+    await engine.sendSummaryNow();
+    res.json({ success: true, message: 'Resumen enviado a Telegram exitosamente.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Fallback to serve index.html for SPA routing
 app.get('*', (req: Request, res: Response) => {
   res.sendFile(path.join(clientDistPath, 'index.html'));
