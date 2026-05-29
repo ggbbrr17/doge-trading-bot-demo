@@ -36,14 +36,23 @@ def prepare_features(closes, volumes):
     return X
 
 def train_hmm(X, n_components=3):
-    model = GaussianHMM(n_components=n_components, covariance_type="full", n_iter=1000, random_state=42)
+    model = GaussianHMM(
+        n_components=n_components, 
+        covariance_type="diag", 
+        n_iter=1000, 
+        random_state=42,
+        min_covar=1e-3
+    )
     model.fit(X)
     return model
 
 def interpret_regimes(model, X):
     # This is a heuristic way to interpret regimes based on their means and variances
     means = model.means_[:, 0] # Mean of returns
-    variances = np.array([np.diag(cov)[0] for cov in model.covars_]) # Variance of returns
+    
+    # Handle diagonal covariance shape (n_components, n_features)
+    # We take the first feature (returns) variance
+    variances = model.covars_[:, 0]
     
     regimes = {}
     for i in range(model.n_components):
