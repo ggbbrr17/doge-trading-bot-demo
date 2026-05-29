@@ -1,4 +1,5 @@
 import { CustomNeuralNetwork } from './aiModel';
+import { MathGenes } from './evolutionEngine';
 
 export interface StrategySignal {
   action: 'BUY' | 'SELL' | 'HOLD';
@@ -87,9 +88,6 @@ function countUpMoves(prices: number[]): { upMoves: number; total: number } {
  * H > 0.55 → persistent/trending market (follow momentum)
  * H ≈ 0.50 → random walk (efficient market)
  * H < 0.45 → anti-persistent/mean-reverting (fade moves)
- *
- * Used by: Renaissance Technologies, DE Shaw, quantitative hedge funds.
- * Reference: Hurst (1951), Peters (1994) "Fractal Market Analysis"
  */
 function hurstExponent(prices: number[]): number {
   if (prices.length < 20) return 0.5;
@@ -115,27 +113,17 @@ function hurstExponent(prices: number[]): number {
 
 /**
  * KALMAN FILTER (1D, constant velocity model)
- * Optimal linear estimator for noisy price observations.
- * Separates "true price signal" from market microstructure noise.
- *
- * Used by: Citadel, Two Sigma, quant trading desks.
- * Reference: Kalman (1960) IEEE Transactions on Automatic Control
- *
- * Q = process noise (how fast the true price can move)
- * R = measurement noise (how noisy the observed price is)
  */
-function kalmanFilter(prices: number[]): { filtered: number[]; velocity: number; acceleration: number } {
-  const Q = 0.0001; // Low process noise → smoother filter
-  const R_noise = 0.005; // Measurement noise
+function kalmanFilter(prices: number[], noiseRatio = 0.005): { filtered: number[]; velocity: number; acceleration: number } {
+  const Q = 0.0001; // Process noise
+  const R_noise = noiseRatio; // Measurement noise
 
   let x = prices[0];
   let P = 1.0;
   const filtered: number[] = [x];
 
   for (let i = 1; i < prices.length; i++) {
-    // PREDICT step
     P = P + Q;
-    // UPDATE step
     const K = P / (P + R_noise); // Kalman gain
     x = x + K * (prices[i] - x);
     P = (1 - K) * P;
@@ -151,15 +139,6 @@ function kalmanFilter(prices: number[]): { filtered: number[]; velocity: number;
 
 /**
  * Z-SCORE: Statistical distance of current price from its rolling mean.
- * z = (price - μ) / σ
- * The backbone of statistical arbitrage ("stat arb").
- *
- * z > +2.0 → price is statistically overbought → SELL
- * z < -2.0 → price is statistically oversold  → BUY
- * |z| < 0.5 → price is near equilibrium → HOLD
- *
- * Used by: Two Sigma, Citadel, AQR Capital, D.E. Shaw
- * Reference: Gatev et al. (2006) "Pairs Trading: Performance of a Relative-Value Arbitrage Rule"
  */
 function zScore(prices: number[], window: number = 30): number {
   if (prices.length < window) return 0;
@@ -173,38 +152,18 @@ function zScore(prices: number[], window: number = 30): number {
 
 /**
  * KELLY CRITERION - Mathematically optimal bet sizing
- * f* = (b·p - q) / b = (b·p - (1-p)) / b
- * where:
- *   b = net odds (avg_win / avg_loss ratio)
- *   p = empirical win probability
- *   q = 1 - p (loss probability)
- *
- * f* > 0 → positive expected value → worth trading
- * f* < 0 → negative expected value → do NOT trade
- *
- * Used by: Ed Thorp (Beat the Dealer, Beat the Market),
- *          Renaissance Technologies, Medallion Fund.
- * Reference: Kelly (1956) Bell System Technical Journal
  */
-function kellyCriterion(winRate: number, avgWin: number, avgLoss: number): number {
+function kellyCriterion(winRate: number, avgWin: number, avgLoss: number, fraction = 0.25): number {
   if (avgLoss <= 0 || winRate <= 0 || winRate >= 1) return 0;
   const b = avgWin / Math.abs(avgLoss);
   const p = winRate;
   const q = 1 - p;
   const kelly = (b * p - q) / b;
-  // Use fractional Kelly (25%) to reduce variance (common practice among professionals)
-  return Math.max(-1, Math.min(1, kelly * 0.25));
+  return Math.max(-1, Math.min(1, kelly * fraction));
 }
 
 /**
  * VARIANCE RATIO TEST (Lo & MacKinlay, 1988)
- * Tests whether price changes follow a random walk.
- *
- * VR > 1.1 → positive serial autocorrelation (momentum/trending)
- * VR < 0.9 → negative serial autocorrelation (mean-reverting)
- * VR ≈ 1.0 → random walk
- *
- * Reference: Lo & MacKinlay (1988) "Stock Market Prices Do Not Follow Random Walks"
  */
 function varianceRatio(prices: number[], shortPeriod: number = 2, longPeriod: number = 10): number {
   if (prices.length < longPeriod + 1) return 1.0;
@@ -225,13 +184,6 @@ function varianceRatio(prices: number[], shortPeriod: number = 2, longPeriod: nu
 
 /**
  * MOMENTUM FACTOR (Jegadeesh & Titman, 1993)
- * Annualized price return over a lookback, skipping the last tick
- * to avoid short-term reversal contamination.
- *
- * Positive → upward momentum → BUY
- * Negative → downward momentum → SELL
- *
- * Reference: Jegadeesh & Titman (1993) Journal of Finance
  */
 function momentumScore(prices: number[], lookback: number = 20, skip: number = 1): number {
   if (prices.length < lookback + skip + 1) return 0;
@@ -242,8 +194,7 @@ function momentumScore(prices: number[], lookback: number = 20, skip: number = 1
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// KEEP calculateIndicators for UI compatibility and Neural Network inputs
-// (Bollinger Bands remain for price band visualization in the dashboard chart)
+// UI compatibility helper
 // ═══════════════════════════════════════════════════════════════════════════════
 export function calculateIndicators(prices: number[]): TechnicalIndicators {
   const currentPrice = prices[prices.length - 1] || 0;
@@ -307,166 +258,150 @@ export class StrategyManager {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // STRATEGY 1: BINOMIAL ORACLE
-  // Uses the Binomial Distribution to estimate whether the current streak of
-  // up/down moves is statistically expected or anomalous.
-  //
-  // Logic:
-  //   - Count up-moves in the last N ticks
-  //   - Assume fair-coin hypothesis (p = 0.5 baseline, adjusted by momentum)
-  //   - P(X >= k | n, p): if the streak is statistically improbable in one
-  //     direction, expect mean reversion (contrarian) or momentum (trend)
-  //   - Combine with Kalman velocity for direction confirmation
+  // STRATEGY 1: BINOMIAL ORACLE (Evolved parameters)
   // ───────────────────────────────────────────────────────────────────────────
   getTemporalOracleSignal(
     indicators: TechnicalIndicators,
     futurePrices: number[],
-    priceHistory: number[] = []
+    priceHistory: number[] = [],
+    genes?: MathGenes
   ): StrategySignal {
     const prices = priceHistory.length > 0 ? priceHistory : [indicators.currentPrice];
     const N = Math.min(20, prices.length - 1);
     if (N < 5) {
-      return { action: 'HOLD', confidence: 0.5, reason: 'Binomial Oracle: insufficient price history for analysis.' };
+      return { action: 'HOLD', confidence: 0.5, reason: 'Binomial Oracle: insufficient price history.' };
     }
 
     const recentPrices = prices.slice(-N - 1);
     const { upMoves, total } = countUpMoves(recentPrices);
     const downMoves = total - upMoves;
 
-    // Base probability: use recent momentum to adjust p slightly
-    const momentum = momentumScore(prices, Math.min(30, prices.length - 1));
-    // Drift-adjusted p: if momentum is positive, slightly above 0.5
+    // Use evolved momentum lookback gene
+    const lookback = genes ? genes.momentumLookback : 20;
+    const momentum = momentumScore(prices, Math.min(lookback, prices.length - 1));
     const p = Math.max(0.2, Math.min(0.8, 0.5 + momentum * 5));
 
-    // Kalman velocity for direction confirmation
-    const kalman = kalmanFilter(recentPrices);
+    // Use evolved kalmanNoiseRatio
+    const noiseRatio = genes ? genes.kalmanNoiseRatio : 0.005;
+    const kalman = kalmanFilter(recentPrices, noiseRatio);
     const velocity = kalman.velocity;
     const acceleration = kalman.acceleration;
 
-    // BINOMIAL ANALYSIS
-    // P(X >= upMoves) under null hypothesis (p=0.5 fair coin)
     const pUpTail = binomialTailProbability(total, upMoves, 0.5);
-    // P(X >= downMoves) for the sell direction
     const pDownTail = binomialTailProbability(total, downMoves, 0.5);
 
     const upPct = ((upMoves / total) * 100).toFixed(0);
     const pUpFmt = (pUpTail * 100).toFixed(1);
     const pDownFmt = (pDownTail * 100).toFixed(1);
 
-    // BUY: upward trend is statistically SUPPORTED (probable to continue)
-    // AND Kalman filter confirms positive velocity
-    if (pUpTail > 0.70 && velocity > 0 && acceleration >= 0 && upMoves > downMoves) {
-      const confidence = Math.min(0.97, 0.7 + (pUpTail - 0.7) * 0.9);
+    const binomialThreshold = genes ? genes.binomialThreshold : 0.70;
+
+    // BUY: streak statistically supported by evolved tail probability & Kalman filter
+    if (pUpTail > binomialThreshold && velocity > 0 && acceleration >= 0 && upMoves > downMoves) {
+      const confidence = Math.min(0.97, 0.7 + (pUpTail - binomialThreshold) * 0.9);
       return {
         action: 'BUY',
         confidence,
-        reason: `Binomial Oracle: ${upMoves}/${total} up-ticks (${upPct}%). P(run|H₀)=${pUpFmt}% — uptrend statistically probable. Kalman velocity: +${(velocity * 10000).toFixed(4)}. Momentum bias: ${(momentum * 100).toFixed(2)}%.`,
+        reason: `Binomial Oracle: ${upMoves}/${total} up-ticks (${upPct}%). P(run|H₀)=${pUpFmt}% — uptrend verified. Evolved Threshold: ${binomialThreshold.toFixed(2)}. Kalman velocity: +${(velocity * 10000).toFixed(4)}.`,
       };
     }
 
-    // SELL: upward streak is statistically EXHAUSTED (improbable to continue)
-    // OR downward momentum is statistically confirmed
-    if ((pUpTail < 0.15 && upMoves > downMoves) || (pDownTail > 0.75 && velocity < 0)) {
+    // SELL: exhaustion or downward momentum confirmed
+    if ((pUpTail < (1 - binomialThreshold) && upMoves > downMoves) || (pDownTail > (binomialThreshold + 0.05) && velocity < 0)) {
       const confidence = Math.min(0.96, 0.72 + (1 - pUpTail) * 0.25);
       return {
         action: 'SELL',
         confidence,
-        reason: `Binomial Oracle: streak exhaustion detected. P(${upMoves} up in ${total}|H₀)=${pUpFmt}% — statistically improbable continuation. Kalman velocity: ${(velocity * 10000).toFixed(4)}. Mean reversion expected.`,
+        reason: `Binomial Oracle: streak exhaustion. P(${upMoves} up|H₀)=${pUpFmt}% — mean reversion expected. Kalman velocity: ${(velocity * 10000).toFixed(4)}.`,
       };
     }
 
-    // SELL: downward run is statistically dominant
-    if (pDownTail > 0.80 && velocity < 0 && downMoves > upMoves) {
-      const confidence = Math.min(0.95, 0.70 + (pDownTail - 0.70) * 0.85);
+    if (pDownTail > (binomialThreshold + 0.10) && velocity < 0 && downMoves > upMoves) {
+      const confidence = Math.min(0.95, 0.70 + (pDownTail - binomialThreshold) * 0.85);
       return {
         action: 'SELL',
         confidence,
-        reason: `Binomial Oracle: bearish dominance confirmed. ${downMoves}/${total} down-ticks. P(down run|H₀)=${pDownFmt}%. Kalman acceleration: ${(acceleration * 10000).toFixed(4)}.`,
+        reason: `Binomial Oracle: bearish dominance. P(down run|H₀)=${pDownFmt}%. Evolved Threshold: ${binomialThreshold.toFixed(2)}.`,
       };
     }
 
     return {
       action: 'HOLD',
       confidence: 0.5,
-      reason: `Binomial Oracle: no statistically significant edge. Up=${upMoves}/${total} (P=${pUpFmt}%). Market in equilibrium zone.`,
+      reason: `Binomial Oracle: no significant edge. Up=${upMoves}/${total} (P=${pUpFmt}%).`,
     };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // STRATEGY 2: Z-SCORE STATISTICAL ARBITRAGE (DCA/GRID mode)
-  // Mean-reversion strategy based on statistical deviation of price from its
-  // rolling mean. Foundation of Statistical Arbitrage used by Two Sigma,
-  // Citadel, and AQR Capital.
-  //
-  // Entry: z < -2.0 (price is 2 standard deviations below mean → BUY)
-  // Exit:  z > +1.5 (price reverts back toward mean → SELL)
-  // DCA:   z < -3.0 (extreme dislocation → add to position)
+  // STRATEGY 2: Z-SCORE STATISTICAL ARBITRAGE (DCA/GRID mode - Evolved parameters)
   // ───────────────────────────────────────────────────────────────────────────
   getGridDcaSignal(
     indicators: TechnicalIndicators,
     hasActiveTrade: boolean,
     averageEntryPrice: number,
-    priceHistory: number[] = []
+    priceHistory: number[] = [],
+    genes?: MathGenes
   ): StrategySignal {
     const prices = priceHistory.length > 0 ? priceHistory : [indicators.currentPrice];
-    const z30 = zScore(prices, 30);  // 30-tick Z-score
-    const z15 = zScore(prices, 15);  // 15-tick Z-score (faster signal)
+    const z30 = zScore(prices, 30);
+    const z15 = zScore(prices, 15);
     const currentPrice = indicators.currentPrice;
 
-    // Variance Ratio to determine if market is mean-reverting or trending
-    const vr = varianceRatio(prices, 2, 10);
-    // VR < 0.9 → confirmed mean-reverting regime (ideal for stat arb)
+    const longPeriod = genes ? genes.varianceRatioLongPeriod : 10;
+    const vr = varianceRatio(prices, 2, longPeriod);
     const isMeanReverting = vr < 0.92;
+
+    const zEntry = genes ? genes.zScoreEntry : -2.0;
+    const zExit = genes ? genes.zScoreExit : 1.5;
+
     const vrFmt = vr.toFixed(3);
     const z30Fmt = z30.toFixed(2);
     const z15Fmt = z15.toFixed(2);
 
     if (!hasActiveTrade) {
-      // Strong oversold dislocation: Z < -2σ in mean-reverting market
-      if (z30 < -2.0 && z15 < -1.5 && isMeanReverting) {
-        const confidence = Math.min(0.93, 0.75 + Math.abs(z30 + 2) * 0.06);
+      // Entry timings based on evolved Z-score thresholds
+      if (z30 < zEntry && z15 < (zEntry + 0.5) && isMeanReverting) {
+        const confidence = Math.min(0.93, 0.75 + Math.abs(z30 - zEntry) * 0.06);
         return {
           action: 'BUY',
           confidence,
-          reason: `Z-Score Stat Arb: price is ${Math.abs(z30).toFixed(2)}σ below 30-tick mean (z₃₀=${z30Fmt}, z₁₅=${z15Fmt}). Variance Ratio=${vrFmt} confirms mean-reverting regime. Statistical edge for reversion entry.`,
+          reason: `Z-Score Stat Arb: price is ${Math.abs(z30).toFixed(2)}σ below mean (z₃₀=${z30Fmt}, z₁₅=${z15Fmt}). Evolved entry z=${zEntry.toFixed(2)}. VR=${vrFmt} (mean-reverting).`,
         };
       }
-      // Moderate oversold in ANY regime
-      if (z30 < -2.5) {
+      if (z30 < (zEntry - 0.5)) {
         return {
           action: 'BUY',
           confidence: 0.80,
-          reason: `Z-Score entry: extreme statistical dislocation z=${z30Fmt}σ. Price likely to revert to mean. VR=${vrFmt}.`,
+          reason: `Z-Score entry: extreme statistical dislocation z=${z30Fmt}σ. Evolved entry target: ${zEntry.toFixed(2)}.`,
         };
       }
     } else {
-      // DCA SAFETY ORDER: extreme further dislocation
+      // DCA safety order at extreme dislocation
       const dropPct = ((averageEntryPrice - currentPrice) / averageEntryPrice) * 100;
-      if (z30 < -3.0 && dropPct > 1.5) {
+      if (z30 < (zEntry - 1.0) && dropPct > 1.5) {
         return {
           action: 'BUY',
           confidence: 0.88,
-          reason: `Z-Score DCA: extreme dislocation z=${z30Fmt}σ and price down ${dropPct.toFixed(2)}% from entry. Averaging down at statistically extreme level.`,
+          reason: `Z-Score DCA: extreme deviation z=${z30Fmt}σ and price drop of -${dropPct.toFixed(2)}%. Averaging down.`,
         };
       }
 
-      // EXIT: price has reverted toward mean (z > +1.0 from entry)
+      // Exit timing using evolved zScoreExit parameter
       const profitPct = ((currentPrice - averageEntryPrice) / averageEntryPrice) * 100;
-      if (z30 > 1.5 || (z30 > 0.8 && profitPct > 0.5)) {
-        const confidence = Math.min(0.92, 0.75 + (z30 - 1.0) * 0.08);
+      if (z30 > zExit || (z30 > (zExit - 0.7) && profitPct > 0.5)) {
+        const confidence = Math.min(0.92, 0.75 + (z30 - zExit) * 0.08);
         return {
           action: 'SELL',
           confidence,
-          reason: `Z-Score exit: price reverted to z=${z30Fmt}σ from mean. PnL: +${profitPct.toFixed(2)}%. Statistical edge exhausted, closing position.`,
+          reason: `Z-Score exit: price reverted to z=${z30Fmt}σ. Evolved Exit z=${zExit.toFixed(2)}. PnL: +${profitPct.toFixed(2)}%.`,
         };
       }
 
-      // Overbought exit at extreme upper bound
-      if (z30 > 2.5) {
+      if (z30 > (zExit + 1.0)) {
         return {
           action: 'SELL',
           confidence: 0.90,
-          reason: `Z-Score overbought: z=${z30Fmt}σ above mean. Sell signal — statistical reversion expected.`,
+          reason: `Z-Score overbought: extreme target reached at z=${z30Fmt}σ. Reversion expected.`,
         };
       }
     }
@@ -474,42 +409,39 @@ export class StrategyManager {
     return {
       action: 'HOLD',
       confidence: 0.5,
-      reason: `Z-Score equilibrium: z₃₀=${z30Fmt}σ, z₁₅=${z15Fmt}σ. VR=${vrFmt} (${isMeanReverting ? 'mean-reverting' : 'trending'} regime). No edge detected.`,
+      reason: `Z-Score equilibrium: z₃₀=${z30Fmt}σ, z₁₅=${z15Fmt}σ. VR=${vrFmt}.`,
     };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // STRATEGY 3: KALMAN FILTER + HURST EXPONENT (replaces Neural Network)
-  // Regime-adaptive quantitative strategy combining:
-  //   - Kalman Filter: optimal price signal extraction
-  //   - Hurst Exponent: market regime classification
-  //   - Momentum Factor: Jegadeesh & Titman academic factor
-  //
-  // Regime detection:
-  //   H > 0.55 → TRENDING → follow Kalman velocity (momentum)
-  //   H < 0.45 → MEAN-REVERTING → fade Kalman velocity (contrarian)
-  //   H ≈ 0.50 → RANDOM WALK → reduce position size, wait
+  // STRATEGY 3: KALMAN FILTER + HURST EXPONENT (Evolved parameters)
   // ───────────────────────────────────────────────────────────────────────────
-  getAiNeuralNetSignal(indicators: TechnicalIndicators, priceHistory: number[] = []): StrategySignal {
+  getAiNeuralNetSignal(
+    indicators: TechnicalIndicators,
+    priceHistory: number[] = [],
+    genes?: MathGenes
+  ): StrategySignal {
     const prices = priceHistory.length > 0 ? priceHistory : [indicators.currentPrice];
     if (prices.length < 15) {
       return { action: 'HOLD', confidence: 0.5, reason: 'Kalman/Hurst: insufficient data.' };
     }
 
-    // KALMAN FILTER: extract clean price signal and velocity
-    const kalman = kalmanFilter(prices.slice(-50));
+    const noiseRatio = genes ? genes.kalmanNoiseRatio : 0.005;
+    const kalman = kalmanFilter(prices.slice(-50), noiseRatio);
     const { velocity, acceleration } = kalman;
 
-    // HURST EXPONENT: classify market regime
+    // Use evolved Hurst thresholds
     const H = hurstExponent(prices.slice(-40));
-    const isTrending = H > 0.55;
-    const isMeanReverting = H < 0.45;
+    const trendH = genes ? genes.hurstTrending : 0.55;
+    const revertH = genes ? genes.hurstReversion : 0.45;
 
-    // MOMENTUM FACTOR (Jegadeesh & Titman)
-    const mom20 = momentumScore(prices, Math.min(20, prices.length - 2));
-    const mom10 = momentumScore(prices, Math.min(10, prices.length - 2));
+    const isTrending = H > trendH;
+    const isMeanReverting = H < revertH;
 
-    // Z-score for mean-reversion component
+    const lookback = genes ? genes.momentumLookback : 20;
+    const mom20 = momentumScore(prices, Math.min(lookback, prices.length - 2));
+    const mom10 = momentumScore(prices, Math.min(Math.round(lookback / 2), prices.length - 2));
+
     const z = zScore(prices, Math.min(25, prices.length));
 
     const HFmt = H.toFixed(3);
@@ -519,13 +451,12 @@ export class StrategyManager {
     const regime = isTrending ? 'TRENDING' : isMeanReverting ? 'MEAN-REVERTING' : 'RANDOM WALK';
 
     if (isTrending) {
-      // TRENDING REGIME → follow Kalman velocity + momentum confirmation
       if (velocity > 0 && acceleration >= 0 && mom20 > 0.001 && mom10 > 0) {
         const confidence = Math.min(0.94, 0.72 + H * 0.25 + mom20 * 5);
         return {
           action: 'BUY',
           confidence,
-          reason: `Kalman+Hurst [${regime}]: H=${HFmt} confirms persistence. Kalman velocity=+${velFmt}, acceleration=+${accFmt}. Momentum (20)=${momFmt}% positive. Riding trending regime.`,
+          reason: `Kalman+Hurst [${regime}]: H=${HFmt} confirms trend. Kalman velocity=+${velFmt}. Trend parameter=${trendH.toFixed(2)}.`,
         };
       }
       if (velocity < 0 && acceleration <= 0 && mom20 < -0.001) {
@@ -533,18 +464,16 @@ export class StrategyManager {
         return {
           action: 'SELL',
           confidence,
-          reason: `Kalman+Hurst [${regime}]: H=${HFmt} downtrend persistent. Kalman velocity=${velFmt}, momentum=${momFmt}%. Exiting trending bearish regime.`,
+          reason: `Kalman+Hurst [${regime}]: H=${HFmt} confirms downtrend. Kalman velocity=${velFmt}. Exiting trending regime.`,
         };
       }
     } else if (isMeanReverting) {
-      // MEAN-REVERTING REGIME → fade extremes (contrarian)
       if (z < -1.8 && velocity > 0) {
-        // Price is below mean but Kalman shows recovery starting
         const confidence = Math.min(0.91, 0.73 + (1 - H) * 0.2);
         return {
           action: 'BUY',
           confidence,
-          reason: `Kalman+Hurst [${regime}]: H=${HFmt} anti-persistent. Z-score=${z.toFixed(2)}σ oversold + Kalman recovery velocity=+${velFmt}. Contrarian entry.`,
+          reason: `Kalman+Hurst [${regime}]: H=${HFmt} (reverting). Z-score=${z.toFixed(2)}σ. Kalman recovery velocity=+${velFmt}.`,
         };
       }
       if (z > 1.8 && velocity < 0) {
@@ -552,7 +481,7 @@ export class StrategyManager {
         return {
           action: 'SELL',
           confidence,
-          reason: `Kalman+Hurst [${regime}]: H=${HFmt} anti-persistent. Z-score=+${z.toFixed(2)}σ overbought + Kalman decline velocity=${velFmt}. Contrarian exit.`,
+          reason: `Kalman+Hurst [${regime}]: H=${HFmt} (reverting). Z-score=+${z.toFixed(2)}σ. Kalman decline velocity=${velFmt}.`,
         };
       }
     }
@@ -560,45 +489,33 @@ export class StrategyManager {
     return {
       action: 'HOLD',
       confidence: 0.5,
-      reason: `Kalman+Hurst [${regime}]: H=${HFmt}. Kalman vel=${velFmt}, acc=${accFmt}. Momentum=${momFmt}%. No asymmetric edge found.`,
+      reason: `Kalman+Hurst [${regime}]: H=${HFmt}. Kalman vel=${velFmt}. Momentum=${momFmt}%.`,
     };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // STRATEGY 4: KELLY CRITERION + VARIANCE RATIO (Conservative)
-  // Position sizing meets regime detection.
-  // Only enters when the KELLY FRACTION is positive (positive expected value)
-  // AND the VARIANCE RATIO confirms the market regime matches strategy type.
-  //
-  // Kelly Criterion is used by:
-  //   - Ed Thorp (Pioneer of quantitative trading, Black-Scholes precursor)
-  //   - Renaissance Technologies Medallion Fund
-  //   - Warren Buffett (qualitative version)
-  //
-  // Uses historical closed-trade stats to compute win rate and payoff ratio.
+  // STRATEGY 4: KELLY CRITERION + VARIANCE RATIO (Evolved parameters)
   // ───────────────────────────────────────────────────────────────────────────
   getConservativeSignal(
     indicators: TechnicalIndicators,
     priceHistory: number[] = [],
-    tradeStats: { winRate: number; avgWin: number; avgLoss: number } = { winRate: 0.5, avgWin: 0.01, avgLoss: 0.008 }
+    tradeStats: { winRate: number; avgWin: number; avgLoss: number } = { winRate: 0.5, avgWin: 0.01, avgLoss: 0.008 },
+    genes?: MathGenes
   ): StrategySignal {
     const prices = priceHistory.length > 0 ? priceHistory : [indicators.currentPrice];
-    const currentPrice = indicators.currentPrice;
 
-    // KELLY FRACTION: mathematical edge measurement
-    const kelly = kellyCriterion(tradeStats.winRate, tradeStats.avgWin, tradeStats.avgLoss);
+    const kellyFrac = genes ? genes.kellyFraction : 0.25;
+    const kelly = kellyCriterion(tradeStats.winRate, tradeStats.avgWin, tradeStats.avgLoss, kellyFrac);
 
-    // VARIANCE RATIO for regime confirmation
-    const vr = varianceRatio(prices, 2, 10);
+    const longPeriod = genes ? genes.varianceRatioLongPeriod : 10;
+    const vr = varianceRatio(prices, 2, longPeriod);
 
-    // Z-SCORE for entry timing
     const z = zScore(prices, 20);
 
-    // KALMAN for direction
-    const kalman = kalmanFilter(prices.slice(-30));
+    const noiseRatio = genes ? genes.kalmanNoiseRatio : 0.005;
+    const kalman = kalmanFilter(prices.slice(-30), noiseRatio);
     const { velocity } = kalman;
 
-    // HURST for regime
     const H = hurstExponent(prices.slice(-30));
 
     const kellyFmt = (kelly * 100).toFixed(1);
@@ -606,52 +523,46 @@ export class StrategyManager {
     const HFmt = H.toFixed(3);
     const zFmt = z.toFixed(2);
 
-    // Only trade if Kelly fraction is POSITIVE (positive expected value)
     if (kelly <= 0) {
       return {
         action: 'HOLD',
         confidence: 0.5,
-        reason: `Kelly Conservative: NEGATIVE edge (f*=${kellyFmt}%). Trade has negative expected value — standing aside. Win rate=${(tradeStats.winRate * 100).toFixed(0)}%, Payoff ratio=${(tradeStats.avgWin / (tradeStats.avgLoss || 1)).toFixed(2)}.`,
+        reason: `Kelly Conservative: NEGATIVE EV (f*=${kellyFmt}%). Expected value negative, skipping. Payoff ratio=${(tradeStats.avgWin / (tradeStats.avgLoss || 1)).toFixed(2)}.`,
       };
     }
 
-    // Positive Kelly edge confirmed — now time the entry with Z-score + Kalman
-    const vrMomentum = vr > 1.05;  // Variance ratio suggests momentum
-    const vrReversion = vr < 0.95; // Variance ratio suggests mean reversion
+    const vrMomentum = vr > 1.05;
 
-    // BUY CONDITION: positive Kelly + price is statistically oversold + Kalman up
     if (z < -1.5 && velocity > 0 && kelly > 0.02) {
       const confidence = Math.min(0.92, 0.72 + kelly * 2 + Math.abs(z) * 0.04);
       return {
         action: 'BUY',
         confidence,
-        reason: `Kelly Conservative BUY: f*=+${kellyFmt}% (positive edge). Z=${zFmt}σ oversold, Kalman recovering (vel=+${(velocity * 10000).toFixed(3)}). H=${HFmt}, VR=${vrFmt}. Mathematically favorable entry.`,
+        reason: `Kelly Conservative BUY: f*=+${kellyFmt}% EV (positive). Z=${zFmt}σ. Evolved Kelly Sizing Factor: ${kellyFrac.toFixed(2)}.`,
       };
     }
 
-    // SELL CONDITION: positive Kelly but price overbought + Kalman declining
     if (z > 1.5 && velocity < 0 && kelly > 0.02) {
       const confidence = Math.min(0.91, 0.72 + kelly * 2 + Math.abs(z) * 0.04);
       return {
         action: 'SELL',
         confidence,
-        reason: `Kelly Conservative SELL: f*=+${kellyFmt}% edge on short side. Z=+${zFmt}σ overbought, Kalman declining. H=${HFmt}, VR=${vrFmt}. Exiting statistically extended position.`,
+        reason: `Kelly Conservative SELL: f*=+${kellyFmt}% EV (short-side). Z=+${zFmt}σ. Evolved Kelly Sizing Factor: ${kellyFrac.toFixed(2)}.`,
       };
     }
 
-    // Strong momentum buy in trending regime with positive Kelly
     if (vrMomentum && H > 0.55 && velocity > 0 && z > -0.5 && z < 1.0 && kelly > 0.05) {
       return {
         action: 'BUY',
         confidence: 0.80,
-        reason: `Kelly Conservative: momentum regime confirmed. f*=+${kellyFmt}%, VR=${vrFmt} (trending), H=${HFmt}. Entering with mathematically sized position.`,
+        reason: `Kelly Conservative: momentum regime VR=${vrFmt}, H=${HFmt}. Evolved Kelly sizing applied.`,
       };
     }
 
     return {
       action: 'HOLD',
       confidence: 0.5,
-      reason: `Kelly Conservative: f*=+${kellyFmt}% (positive edge but timing not optimal). Z=${zFmt}σ, VR=${vrFmt}, H=${HFmt}. Waiting for better entry point.`,
+      reason: `Kelly Conservative: positive edge f*=+${kellyFmt}% but entry timing not optimal.`,
     };
   }
 }

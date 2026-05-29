@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Play, Square, Bot, TrendingUp, Cpu, Settings, Shield,
   Terminal, Activity, DollarSign, Percent, Award,
-  Key, Loader2, Sparkles
+  Key, Loader2, Sparkles, Send
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -42,6 +42,27 @@ interface NeuralNetwork {
   outputs: number[];
 }
 
+interface MathGenes {
+  binomialThreshold: number;
+  zScoreEntry: number;
+  zScoreExit: number;
+  hurstTrending: number;
+  hurstReversion: number;
+  kalmanNoiseRatio: number;
+  varianceRatioLongPeriod: number;
+  kellyFraction: number;
+  momentumLookback: number;
+}
+
+interface EvolutionStats {
+  generation: number;
+  activeGenes: MathGenes;
+  fitnessScore: number;
+  lastEvolvedAt: number;
+  bestFormulaExpression: string;
+  evolutionLogs: string[];
+}
+
 interface BotConfig {
   mode: 'DEMO' | 'TESTNET' | 'REAL';
   isRunning: boolean;
@@ -53,7 +74,9 @@ interface BotConfig {
   binanceApiSecret: string;
   gridLayers: number;
   marketType: 'SPOT' | 'FUTURES';
-  leverage: number;
+  leverage: number; // Only for FUTURES
+  telegramBotToken?: string;
+  telegramChatId?: string;
 }
 
 interface BotStats {
@@ -87,8 +110,10 @@ export default function App() {
     binanceApiKey: '',
     binanceApiSecret: '',
     gridLayers: 3,
-    marketType: 'SPOT',
-    leverage: 5
+    marketType: 'SPOT', // Default to SPOT
+    leverage: 5, // Default leverage for futures
+    telegramBotToken: '7575795641:AAHdzUClOsiwyqp4mZorLEyvDqeoYIh2LKA',
+    telegramChatId: ''
   });
 
   const [stats, setStats] = useState<BotStats>({
@@ -123,6 +148,25 @@ export default function App() {
     outputs: [0, 0]
   });
 
+  const [evolution, setEvolution] = useState<EvolutionStats>({
+    generation: 0,
+    activeGenes: {
+      binomialThreshold: 0.70,
+      zScoreEntry: -2.0,
+      zScoreExit: 1.5,
+      hurstTrending: 0.55,
+      hurstReversion: 0.45,
+      kalmanNoiseRatio: 0.005,
+      varianceRatioLongPeriod: 10,
+      kellyFraction: 0.25,
+      momentumLookback: 20
+    },
+    fitnessScore: 0.0,
+    lastEvolvedAt: Date.now(),
+    bestFormulaExpression: "P(X >= k | n, p) * K_vel + Kelly(f*) - Z_score * VarianceRatio()",
+    evolutionLogs: ["Genetic engine standby."]
+  });
+
   // Settings modification state
   const [editApiKey, setEditApiKey] = useState('');
   const [editApiSecret, setEditApiSecret] = useState('');
@@ -133,6 +177,8 @@ export default function App() {
   const [editMode, setEditMode] = useState<'DEMO' | 'TESTNET' | 'REAL'>('DEMO');
   const [editMarketType, setEditMarketType] = useState<'SPOT' | 'FUTURES'>('SPOT');
   const [editLeverage, setEditLeverage] = useState(5);
+  const [editTelegramBotToken, setEditTelegramBotToken] = useState('');
+  const [editTelegramChatId, setEditTelegramChatId] = useState('');
 
   const [priceDirection, setPriceDirection] = useState<'UP' | 'DOWN' | 'STABLE'>('STABLE');
   const lastPriceRef = useRef<number>(0.42);
@@ -184,6 +230,10 @@ export default function App() {
             setNeuralNet(data.neuralNetwork);
           }
 
+          if (data.evolution) {
+            setEvolution(data.evolution);
+          }
+
           // Visual price ticker flashing
           const newPrice = data.indicators.currentPrice;
           if (newPrice > lastPriceRef.current) {
@@ -222,6 +272,8 @@ export default function App() {
     setEditMode(config.mode);
     setEditMarketType(config.marketType || 'SPOT');
     setEditLeverage(config.leverage || 5);
+    setEditTelegramBotToken(config.telegramBotToken || '');
+    setEditTelegramChatId(config.telegramChatId || '');
   }, [config]);
 
   // Trigger server actions
@@ -250,7 +302,9 @@ export default function App() {
           binanceApiKey: editApiKey,
           binanceApiSecret: editApiSecret,
           marketType: editMarketType,
-          leverage: Number(editLeverage)
+          leverage: Number(editLeverage),
+          telegramBotToken: editTelegramBotToken,
+          telegramChatId: editTelegramChatId
         })
       });
       if (response.ok) {
@@ -291,6 +345,19 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Función para enviar un mensaje de prueba a Telegram
+  const sendTestTelegramMessage = async () => {
+    if (!editTelegramBotToken || !editTelegramChatId) {
+      alert('Por favor, introduce el Token del Bot y el Chat ID de Telegram.');
+      return;
+    }
+    await fetch('http://localhost:5000/api/send-telegram-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: editTelegramBotToken, chatId: editTelegramChatId })
+    });
   };
 
   // Helper formatting values
@@ -930,6 +997,45 @@ export default function App() {
                 </div>
               )}
 
+              {/* Telegram Notifications Configuration */}
+              <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
+                <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-cyan">
+                  <Send size={14} className="telegram-icon" /> TELEGRAM NOTIFICATIONS
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] text-slate-400 font-semibold uppercase">Telegram Bot Token</label>
+                  <input
+                    type="text"
+                    placeholder="Enter your Telegram Bot Token (e.g., 123456:ABC-DEF...)"
+                    value={editTelegramBotToken}
+                    onChange={(e) => setEditTelegramBotToken(e.target.value)}
+                    className="cyber-input text-xs font-mono"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] text-slate-400 font-semibold uppercase">Telegram Chat ID</label>
+                  <input
+                    type="text"
+                    placeholder="Enter your Telegram Chat ID (e.g., -123456789)"
+                    value={editTelegramChatId}
+                    onChange={(e) => setEditTelegramChatId(e.target.value)}
+                    className="cyber-input text-xs font-mono"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  Get real-time trade notifications. Create a bot with @BotFather and get your chat ID from @get_id_bot.
+                </p>
+                <button
+                  type="button"
+                  onClick={sendTestTelegramMessage}
+                  className="btn-cyber justify-center text-xs tracking-wider bg-cyan-500/10 border-cyan-500/30 text-neon-cyan hover:bg-cyan-500/20"
+                >
+                  <Send size={14} /> SEND TEST MESSAGE
+                </button>
+              </div>
+
               <button
                 type="submit"
                 disabled={isUpdatingConfig}
@@ -974,6 +1080,84 @@ export default function App() {
               {logs.length === 0 && (
                 <div className="text-slate-600 italic">Waiting for quantum state stream...</div>
               )}
+            </div>
+          </div>
+
+          {/* AI MATHEMATICAL EVOLUTION & DYNAMIC FORMULA CORE */}
+          <div className="cyber-card dashboard-row-full flex flex-col gap-6 border border-pink-500/20 bg-gradient-to-r from-slate-950/80 via-black/80 to-slate-950/80 shadow-[0_0_20px_rgba(244,63,94,0.05)]">
+            <div className="flex items-center justify-between border-b border-white/5 pb-3">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <Sparkles size={16} className="text-neon-pink animate-pulse" /> AI Genetic Formula Generator & Optimization Engine
+              </h2>
+              <div className="flex gap-4">
+                <span className="text-xs text-slate-400 font-mono">
+                  GENERATION: <span className="text-neon-cyan font-bold font-mono">{evolution.generation}</span>
+                </span>
+                <span className="text-xs text-slate-400 font-mono">
+                  FITNESS: <span className={evolution.fitnessScore >= 0 ? "text-neon-green font-bold font-mono" : "text-neon-red font-bold font-mono"}>{evolution.fitnessScore.toFixed(2)} pts</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left Side: Evolved Math Expression */}
+              <div className="lg:col-span-7 flex flex-col gap-4">
+                <div className="border border-white/5 bg-slate-950/50 p-4 rounded-xl flex flex-col gap-3">
+                  <div className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Active Evolved Mathematical Expression Created by AI</div>
+                  <div className="font-mono text-neon-cyan text-xs lg:text-sm border border-cyan-500/20 bg-cyan-950/20 p-3 rounded-lg flex items-center justify-center font-bold tracking-tight text-center shadow-[inset_0_2px_8px_rgba(0,0,0,0.6)]">
+                    {evolution.bestFormulaExpression}
+                  </div>
+                </div>
+
+                {/* Evolved Chromosome Parameter List */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="border border-white/5 bg-black/40 p-3 rounded-lg flex flex-col gap-1">
+                    <span className="text-[9px] text-slate-500 uppercase tracking-widest">Z-Score Entry</span>
+                    <span className="text-xs font-bold text-white font-mono">{evolution.activeGenes.zScoreEntry.toFixed(2)}σ</span>
+                  </div>
+                  <div className="border border-white/5 bg-black/40 p-3 rounded-lg flex flex-col gap-1">
+                    <span className="text-[9px] text-slate-500 uppercase tracking-widest">Z-Score Exit</span>
+                    <span className="text-xs font-bold text-white font-mono">+{evolution.activeGenes.zScoreExit.toFixed(2)}σ</span>
+                  </div>
+                  <div className="border border-white/5 bg-black/40 p-3 rounded-lg flex flex-col gap-1">
+                    <span className="text-[9px] text-slate-500 uppercase tracking-widest">Binomial Thresh</span>
+                    <span className="text-xs font-bold text-white font-mono">{evolution.activeGenes.binomialThreshold.toFixed(2)}</span>
+                  </div>
+                  <div className="border border-white/5 bg-black/40 p-3 rounded-lg flex flex-col gap-1">
+                    <span className="text-[9px] text-slate-500 uppercase tracking-widest">Hurst Trend</span>
+                    <span className="text-xs font-bold text-white font-mono">&gt;{evolution.activeGenes.hurstTrending.toFixed(2)}</span>
+                  </div>
+                  <div className="border border-white/5 bg-black/40 p-3 rounded-lg flex flex-col gap-1">
+                    <span className="text-[9px] text-slate-500 uppercase tracking-widest">Hurst Revert</span>
+                    <span className="text-xs font-bold text-white font-mono">&lt;{evolution.activeGenes.hurstReversion.toFixed(2)}</span>
+                  </div>
+                  <div className="border border-white/5 bg-black/40 p-3 rounded-lg flex flex-col gap-1">
+                    <span className="text-[9px] text-slate-500 uppercase tracking-widest">Kelly Sizing</span>
+                    <span className="text-xs font-bold text-white font-mono">{(evolution.activeGenes.kellyFraction * 100).toFixed(0)}% Kelly</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Side: Evolved Math Logs */}
+              <div className="lg:col-span-5 flex flex-col gap-3">
+                <div className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold flex items-center gap-1.5">
+                  <Activity size={12} className="text-neon-pink" /> Walk-Forward Backtest & Mutator Ledger
+                </div>
+                <div className="terminal-console h-[160px] bg-black/70 border border-pink-500/5 select-none text-[10px] leading-relaxed">
+                  {evolution.evolutionLogs.map((evLog, idx) => {
+                    let color = "text-slate-400";
+                    if (evLog.includes("SUCCESS")) color = "text-neon-green font-semibold";
+                    else if (evLog.includes("activated")) color = "text-neon-pink";
+                    else if (evLog.includes("mutation") || evLog.includes("mutated") || evLog.includes("Mutating")) color = "text-neon-yellow";
+                    else if (evLog.includes("Parameters")) color = "text-neon-cyan font-medium";
+                    return (
+                      <div key={idx} className={color}>
+                        {evLog}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
 

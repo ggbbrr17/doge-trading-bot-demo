@@ -3,6 +3,7 @@ import * as path from 'path';
 import { BinanceClient } from '../utils/binanceClient';
 import { CustomNeuralNetwork } from './aiModel';
 import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicators } from './strategies';
+import { EvolutionEngine } from './evolutionEngine';
 
 export interface Trade {
   id: string;
@@ -44,6 +45,8 @@ export interface BotConfig {
   gridLayers: number;
   marketType: 'SPOT' | 'FUTURES';
   leverage: number;
+  telegramBotToken?: string;
+  telegramChatId?: string;
 }
 
 export class TradingEngine {
@@ -51,22 +54,25 @@ export class TradingEngine {
   private stats: BotStats;
   private trades: Trade[] = [];
   private logQueue: string[] = [];
-  
+
   private pricesBuffer: number[] = [];
   private candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[] = [];
-  
+
   private neuralNet: CustomNeuralNetwork;
   private strategyManager: StrategyManager;
+  private evolutionEngine: EvolutionEngine;
   private binanceClient: BinanceClient | null = null;
   private stateFilePath: string;
 
   private activeIntervalId: NodeJS.Timeout | null = null;
   private onUpdateCallback: (() => void) | null = null;
+  private tickCount = 0;
 
   constructor() {
     this.stateFilePath = path.join(process.cwd(), 'trading_state.json');
     this.neuralNet = new CustomNeuralNetwork();
     this.strategyManager = new StrategyManager(this.neuralNet);
+    this.evolutionEngine = new EvolutionEngine();
 
     // Initial Defaults
     this.config = {
@@ -81,6 +87,8 @@ export class TradingEngine {
       gridLayers: 3,
       marketType: 'SPOT',
       leverage: 5,
+      telegramBotToken: '7575795641:AAHdzUClOsiwyqp4mZorLEyvDqeoYIh2LKA',
+      telegramChatId: '',
     };
 
     this.stats = {
@@ -96,6 +104,7 @@ export class TradingEngine {
 
     this.loadState();
     this.initializeBinance();
+    this.initializeTelegram();
     this.seedCandles();
   }
 
@@ -178,7 +187,7 @@ export class TradingEngine {
         marketType: this.config.marketType,
       });
       this.log(`Binance Client authenticated in ${this.config.mode} mode (${this.config.marketType}).`);
-      
+
       if (this.config.marketType === 'FUTURES') {
         this.binanceClient.setLeverage('DOGEUSDT', this.config.leverage)
           .then(() => this.log(`Binance leverage successfully configured to ${this.config.leverage}x.`))
@@ -190,6 +199,15 @@ export class TradingEngine {
         this.log(`WARNING: Binance keys are missing. Switching environment to DEMO.`);
         this.config.mode = 'DEMO';
       }
+    }
+  }
+
+  // Initialize/Update Telegram connection (just logs for now)
+  initializeTelegram() {
+    if (this.config.telegramBotToken && this.config.telegramChatId) {
+      this.log('Telegram notifications enabled.');
+    } else {
+      this.log('Telegram notifications disabled (missing token or chat ID).');
     }
   }
 
@@ -231,7 +249,7 @@ export class TradingEngine {
     this.config.isRunning = true;
     this.log(`AI Core initialized. Bot STARTED using [${this.config.strategy}] strategy in ${this.config.mode} mode.`);
     this.saveState();
-    
+
     // Start interval loop (ticks every 3 seconds)
     this.activeIntervalId = setInterval(() => this.tick(), 3000);
     this.triggerUpdate();
@@ -255,7 +273,8 @@ export class TradingEngine {
 
     this.config = { ...this.config, ...newConfig };
     this.initializeBinance();
-    
+    this.initializeTelegram(); // Re-initialize Telegram on config update
+
     // Recalculate demo balance stats if changed back to demo
     if (newConfig.mode === 'DEMO') {
       this.log('Re-syncing Simulated Demo Portfolio to standard $10,000 USDT base.');
@@ -296,6 +315,16 @@ export class TradingEngine {
       // 5. Generate trading signals based on selected strategy
       if (this.config.isRunning) {
         await this.evaluateStrategy(indicators);
+
+        // 5.1 Increment tickCount and trigger periodic mathematical evolution
+        this.tickCount++;
+        if (this.tickCount % 50 === 0) {
+          this.log(`AI Evolutionary cycle triggered. Mutating and backtesting quantitative timing formulas...`);
+          const didEvolve = this.evolutionEngine.evolve(this.pricesBuffer, this.trades);
+          if (didEvolve) {
+            this.log(`🧬 SUCCESS: AI Evolved a superior mathematical formula: ${this.evolutionEngine.getStats().bestFormulaExpression}`);
+          }
+        }
       }
 
       this.triggerUpdate();
@@ -316,7 +345,7 @@ export class TradingEngine {
   private updateCandles(price: number) {
     const now = Math.floor(Date.now() / 1000);
     const lastCandle = this.candles[this.candles.length - 1];
-    
+
     // Check if 1 minute has elapsed to spawn a new candle
     if (lastCandle && now - lastCandle.time < 60) {
       // Update existing candle
@@ -358,9 +387,18 @@ export class TradingEngine {
         const reason = isStopLossBreached
           ? `STOP LOSS triggered at ${pnlPercent.toFixed(2)}%`
           : `TAKE PROFIT triggered at ${pnlPercent.toFixed(2)}%`;
-        
+
         this.log(`Automated execution: ${reason}`);
         this.executeExit(trade, currentPrice, reason);
+
+        // Send Telegram notification for automated exit
+        const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+          `*Trade ID:* ${trade.id}\n` +
+          `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
+          `*Exit Price:* $${currentPrice.toFixed(5)}\n` +
+          `*PnL:* $${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)\n` +
+          `*Reason:* ${reason}`;
+        this.sendTelegramMessage(telegramMsg);
       }
     }
   }
@@ -385,15 +423,19 @@ export class TradingEngine {
       : 0.008;
     const tradeStats = { winRate, avgWin, avgLoss };
 
+    // Get dynamically evolved mathematical genes
+    const genes = this.evolutionEngine.getActiveGenes();
+
     let signal: StrategySignal = { action: 'HOLD', confidence: 0, reason: 'Waiting for evaluation.' };
 
     switch (this.config.strategy) {
       case 'ORACLE':
-        // Binomial Distribution Oracle — uses real price history
+        // Binomial Distribution Oracle — uses real price history & genes
         signal = this.strategyManager.getTemporalOracleSignal(
           indicators,
-          [], // futurePrices not needed — binomial uses history
-          this.pricesBuffer
+          [],
+          this.pricesBuffer,
+          genes
         );
         break;
 
@@ -403,18 +445,19 @@ export class TradingEngine {
           indicators,
           hasActiveTrade,
           averageEntryPrice,
-          this.pricesBuffer
+          this.pricesBuffer,
+          genes
         );
         break;
 
       case 'NEURAL_NETWORK':
         // Kalman Filter + Hurst Exponent regime detection
-        signal = this.strategyManager.getAiNeuralNetSignal(indicators, this.pricesBuffer);
+        signal = this.strategyManager.getAiNeuralNetSignal(indicators, this.pricesBuffer, genes);
         break;
 
       case 'CONSERVATIVE':
         // Kelly Criterion + Variance Ratio
-        signal = this.strategyManager.getConservativeSignal(indicators, this.pricesBuffer, tradeStats);
+        signal = this.strategyManager.getConservativeSignal(indicators, this.pricesBuffer, tradeStats, genes);
         break;
     }
 
@@ -422,6 +465,14 @@ export class TradingEngine {
     if (signal.action === 'BUY' && !hasActiveTrade) {
       this.log(`AI strategy [${this.config.strategy}] generated BUY signal! Reason: ${signal.reason}`);
       await this.executeEntry('BUY', indicators.currentPrice, signal.reason);
+
+      // Send Telegram notification for entry
+      const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+        `*Trade ID:* ${this.trades[this.trades.length - 1]?.id || 'N/A'}\n` +
+        `*Action:* BUY (Entry)\n` +
+        `*Entry Price:* $${indicators.currentPrice.toFixed(5)}\n` +
+        `*Reason:* ${signal.reason}`;
+      this.sendTelegramMessage(telegramMsg);
     } else if (signal.action === 'SELL' && hasActiveTrade) {
       this.log(`AI strategy [${this.config.strategy}] generated SELL signal! Reason: ${signal.reason}`);
       for (const openTrade of openTrades) {
@@ -430,6 +481,14 @@ export class TradingEngine {
     } else if (signal.action === 'BUY' && hasActiveTrade && this.config.strategy === 'GRID_DCA') {
       this.log(`AI strategy [${this.config.strategy}] triggered DCA buy! Reason: ${signal.reason}`);
       await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`);
+
+      // Send Telegram notification for DCA entry
+      const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+        `*Trade ID:* ${this.trades[this.trades.length - 1]?.id || 'N/A'}\n` +
+        `*Action:* BUY (DCA Entry)\n` +
+        `*Entry Price:* $${indicators.currentPrice.toFixed(5)}\n` +
+        `*Reason:* DCA Safety Order: ${signal.reason}`;
+      this.sendTelegramMessage(telegramMsg);
     }
   }
 
@@ -446,8 +505,8 @@ export class TradingEngine {
         const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity);
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)
-          : (order.fills && order.fills.length > 0 
-            ? parseFloat(order.fills[0].price) 
+          : (order.fills && order.fills.length > 0
+            ? parseFloat(order.fills[0].price)
             : price);
         const fillQty = (order.executedQty && parseFloat(order.executedQty) > 0)
           ? parseFloat(order.executedQty)
@@ -470,7 +529,7 @@ export class TradingEngine {
 
         this.trades.push(trade);
         this.log(`Binance Order filled successfully. ID: ${trade.id}. Price: $${fillPrice.toFixed(5)}`);
-        
+
         // Sync real-time balances if needed
         await this.syncRealAccountBalances();
       } catch (e: any) {
@@ -478,8 +537,8 @@ export class TradingEngine {
       }
     } else {
       // SIMULATED PAPER TRADING ENTRY
-      const marginUsed = this.config.marketType === 'FUTURES' 
-        ? amount / this.config.leverage 
+      const marginUsed = this.config.marketType === 'FUTURES'
+        ? amount / this.config.leverage
         : amount;
 
       if (this.stats.totalBalanceUSDT < marginUsed) {
@@ -503,7 +562,7 @@ export class TradingEngine {
       // Subtract USDT, Add DOGE to virtual stats
       this.stats.totalBalanceUSDT -= marginUsed;
       this.stats.dogeBalance += quantity;
-      
+
       this.trades.push(trade);
       this.log(`Simulated ${this.config.marketType} Trade executed. Entry vector stored: [${trade.id}]${this.config.marketType === 'FUTURES' ? ` with ${this.config.leverage}x leverage (Margin: $${marginUsed.toFixed(2)})` : ''}`);
       this.saveState();
@@ -519,21 +578,21 @@ export class TradingEngine {
         const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity);
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)
-          : (order.fills && order.fills.length > 0 
-            ? parseFloat(order.fills[0].price) 
+          : (order.fills && order.fills.length > 0
+            ? parseFloat(order.fills[0].price)
             : price);
-        
+
         // Finalize Trade structure
         trade.status = 'CLOSED';
         trade.exitPrice = fillPrice;
         trade.exitTimestamp = Date.now();
-        
+
         const pnl = (fillPrice - trade.price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
         trade.pnl = parseFloat(pnl.toFixed(4));
         trade.pnlPercent = parseFloat((((fillPrice - trade.price) / trade.price) * 100 * (trade.side === 'BUY' ? 1 : -1)).toFixed(2));
 
         this.log(`Binance exit order filled. PnL: $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)`);
-        
+
         // Train Neural Network using trade feedback!
         this.trainModelOnExit(trade);
 
@@ -562,8 +621,8 @@ export class TradingEngine {
       trade.pnlPercent = parseFloat((((finalExitPrice - trade.price) / trade.price) * 100 * (trade.side === 'BUY' ? 1 : -1)).toFixed(2));
 
       // Crediting virtual balances
-      const marginUsed = this.config.marketType === 'FUTURES' 
-        ? trade.amount / this.config.leverage 
+      const marginUsed = this.config.marketType === 'FUTURES'
+        ? trade.amount / this.config.leverage
         : trade.amount;
       const creditedUSDT = marginUsed + pnl;
       this.stats.totalBalanceUSDT += creditedUSDT;
@@ -572,6 +631,15 @@ export class TradingEngine {
       this.log(`Simulated Trade closed. ID: ${trade.id}. PnL: $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)`);
 
       // Train Neural Network using trade feedback!
+      // Send Telegram notification for exit
+      const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
+        `*Trade ID:* ${trade.id}\n` +
+        `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
+        `*Exit Price:* $${finalExitPrice.toFixed(5)}\n` +
+        `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
+        `*Reason:* ${reason}`;
+      this.sendTelegramMessage(telegramMsg);
+
       this.trainModelOnExit(trade);
 
       this.updateStats();
@@ -582,7 +650,7 @@ export class TradingEngine {
   // Active reinforcement learning call
   private trainModelOnExit(trade: Trade) {
     if (trade.pnl === undefined) return;
-    
+
     // Fetch last candle features
     const rsi = this.candles[this.candles.length - 1]?.close || 50; // indicator proxy
     const indicators = calculateIndicators(this.pricesBuffer);
@@ -601,6 +669,15 @@ export class TradingEngine {
     // Reinforce the neural network weights!
     this.neuralNet.reinforce(normalizedInputs, trade.side, trade.pnl);
     this.log(`Neural Core weights reinforced. Backpropagation feedback applied successfully.`);
+
+    // If trade resulted in a loss, trigger Genetic Algorithm mathematical evolution!
+    if (trade.pnl <= 0) {
+      this.log(`Underperforming closed position [${trade.id}] detected. Initiating Genetic Mathematical Evolution Epoch...`);
+      const didEvolve = this.evolutionEngine.evolve(this.pricesBuffer, this.trades);
+      if (didEvolve) {
+        this.log(`🧬 EVOLVED: AI evolved a superior chromosome. New formula: ${this.evolutionEngine.getStats().bestFormulaExpression}`);
+      }
+    }
   }
 
   // Update statistics calculations
@@ -633,7 +710,7 @@ export class TradingEngine {
 
     try {
       const accountInfo = await this.binanceClient.getAccountInfo();
-      
+
       if (this.config.marketType === 'FUTURES') {
         const assets = accountInfo.assets || [];
         const positions = accountInfo.positions || [];
@@ -650,7 +727,7 @@ export class TradingEngine {
         this.log(`Synced Futures balances from Binance: ${this.stats.totalBalanceUSDT} USDT (Available Margin), ${this.stats.dogeBalance} DOGE (Position).`);
       } else {
         const balances = accountInfo.balances || [];
-        
+
         const usdtAsset = balances.find((b: any) => b.asset === 'USDT');
         const dogeAsset = balances.find((b: any) => b.asset === 'DOGE');
 
@@ -686,6 +763,42 @@ export class TradingEngine {
         currentPrice,
       },
       neuralNetwork: this.neuralNet.getWeightsAndNeurons(),
+      evolution: this.evolutionEngine.getStats(),
     };
+  }
+
+  private sendTelegramMessage(text: string) {
+    const token = this.config.telegramBotToken;
+    const chatId = this.config.telegramChatId;
+
+    if (!token || !chatId) return;
+
+    const data = JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'Markdown',
+    });
+
+    const options = {
+      hostname: 'api.telegram.org',
+      port: 443,
+      path: `/bot${token}/sendMessage`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    };
+
+    const req = require('https').request(options, (res: any) => {
+      res.on('data', () => { });
+    });
+
+    req.on('error', (e: any) => {
+      console.error(`Telegram notification error: ${e.message}`);
+    });
+
+    req.write(data);
+    req.end();
   }
 }

@@ -437,3 +437,10 @@ body::before {
 .cyber-table tr:hover td {
   background: rgba(255, 255, 255, 0.01);
 }
+
+/* Telegram specific styles */
+.telegram-icon {
+  color: #0088cc;
+  /* Telegram blue */
+  filter: drop-shadow(0 0 4px rgba(0, 136, 204, 0.4));
+}
