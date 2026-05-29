@@ -21,6 +21,8 @@ export interface Trade {
   exitPrice?: number;
   exitTimestamp?: number;
   reason?: string;
+  targetSL?: number;
+  targetTP?: number;
 }
 
 export interface BotStats {
@@ -37,10 +39,9 @@ export interface BotStats {
 export interface BotConfig {
   mode: 'DEMO' | 'TESTNET' | 'REAL';
   isRunning: boolean;
-  strategy: 'ORACLE' | 'GRID_DCA' | 'NEURAL_NETWORK' | 'CONSERVATIVE' | 'GEMMA_4';
+  strategy: 'AI_UNIFIED';
   tradeSizeUSDT: number;
-  stopLossPercent: number;
-  takeProfitPercent: number;
+  geminiApiKey: string;
   binanceApiKey: string;
   binanceApiSecret: string;
   gridLayers: number;
@@ -84,10 +85,9 @@ export class TradingEngine {
     this.config = {
       mode: 'DEMO',
       isRunning: false,
-      strategy: 'ORACLE',
+      strategy: 'AI_UNIFIED',
       tradeSizeUSDT: 50,
-      stopLossPercent: 2.0,
-      takeProfitPercent: 1.5,
+      geminiApiKey: '',
       binanceApiKey: '',
       binanceApiSecret: '',
       gridLayers: 3,
@@ -280,6 +280,10 @@ export class TradingEngine {
     this.config = { ...this.config, ...newConfig };
     this.initializeBinance();
     this.initializeTelegram(); // Re-initialize Telegram on config update
+    
+    if (newConfig.geminiApiKey !== undefined) {
+      this.gemmaService.updateApiKey(newConfig.geminiApiKey);
+    }
 
     // Recalculate demo balance stats if changed back to demo
     if (newConfig.mode === 'DEMO') {
@@ -386,9 +390,9 @@ export class TradingEngine {
       trade.pnlPercent = parseFloat(pnlPercent.toFixed(2));
 
       // Automated exits (Stop-Loss and Take-Profit)
-      // Check limits
-      const isStopLossBreached = pnlPercent <= -this.config.stopLossPercent;
-      const isTakeProfitBreached = pnlPercent >= this.config.takeProfitPercent;
+      // Check limits based on dynamic targets set by AI for this specific trade
+      const isStopLossBreached = trade.targetSL !== undefined && pnlPercent <= -trade.targetSL;
+      const isTakeProfitBreached = trade.targetTP !== undefined && pnlPercent >= trade.targetTP;
 
       if (isStopLossBreached || isTakeProfitBreached) {
         const reason = isStopLossBreached
@@ -436,27 +440,12 @@ export class TradingEngine {
     // Get dynamically evolved mathematical genes
     const genes = this.evolutionEngine.getActiveGenes();
 
-    let signal: StrategySignal;
-
-    if (this.config.strategy === 'GEMMA_4') {
-      signal = await this.getGemmaSignal(indicators);
-    } else {
-      // Use the new Unified Strategy voting process, passing the cached Gemma 4 signal as the 5th voter!
-      signal = this.strategyManager.getUnifiedSignal(
-        indicators,
-        this.pricesBuffer,
-        hasActiveTrade,
-        averageEntryPrice,
-        tradeStats,
-        genes,
-        this.cachedGemmaSignal
-      );
-    }
+    let signal: StrategySignal = await this.getGemmaSignal(indicators);
 
     // Process Signal Action
     if (signal.action === 'BUY' && !hasActiveTrade) {
       this.log(`AI Unified strategy generated BUY signal! Reason: ${signal.reason}`);
-      await this.executeEntry('BUY', indicators.currentPrice, signal.reason);
+      await this.executeEntry('BUY', indicators.currentPrice, signal.reason, signal.targetSL, signal.targetTP);
 
       // Send Telegram notification for entry
       const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
@@ -473,7 +462,7 @@ export class TradingEngine {
     } else if (signal.action === 'BUY' && hasActiveTrade) {
       // Allow safety orders/DCA buy signals if the unified signal suggests it (e.g. from voters)
       this.log(`AI Unified strategy triggered DCA buy! Reason: ${signal.reason}`);
-      await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`);
+      await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`, signal.targetSL, signal.targetTP);
 
       // Send Telegram notification for DCA entry
       const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
@@ -528,18 +517,20 @@ export class TradingEngine {
       return {
         action: this.cachedGemmaSignal.action,
         confidence: this.cachedGemmaSignal.confidence,
-        reason: `🤖 Gemma 4 (${ageMinutes}min ago): ${this.cachedGemmaSignal.reason}`,
+        targetSL: this.cachedGemmaSignal.stopLossPercent,
+        targetTP: this.cachedGemmaSignal.takeProfitPercent,
+        reason: `🤖 AI Unified (${ageMinutes}min ago): ${this.cachedGemmaSignal.reason}`,
       };
     }
 
     return {
       action: 'HOLD',
       confidence: 0.5,
-      reason: '🤖 Gemma 4: Awaiting first analysis from Gemini + Google Search...',
+      reason: '🤖 AI Unified: Awaiting first analysis from Gemini + Google Search...',
     };
   }
 
-  private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string) {
+  private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string, targetSL?: number, targetTP?: number) {
     const symbol = 'DOGEUSDT';
     const amount = this.config.tradeSizeUSDT;
     const quantity = amount / price;
@@ -571,6 +562,8 @@ export class TradingEngine {
           timestamp: Date.now(),
           status: 'OPEN',
           reason,
+          targetSL,
+          targetTP,
         };
 
         this.trades.push(trade);
@@ -603,6 +596,8 @@ export class TradingEngine {
         timestamp: Date.now(),
         status: 'OPEN',
         reason,
+        targetSL,
+        targetTP,
       };
 
       // Subtract USDT, Add DOGE to virtual stats
@@ -660,14 +655,7 @@ export class TradingEngine {
       }
     } else {
       // SIMULATED PAPER TRADING EXIT
-      // In Demo mode, we also support "Oracle 100% win-rate override".
-      // If the strategy is Oracle, we force exit only at positive price margins!
       let finalExitPrice = price;
-      if (this.config.strategy === 'ORACLE' && price <= trade.price) {
-        // Oracle mode cheat: forces lookahead execution at positive fill
-        finalExitPrice = parseFloat((trade.price * (1 + 0.008 + Math.random() * 0.005)).toFixed(5));
-        this.log(`Oracle Warp active: bending execution spread to secure profit fill @ $${finalExitPrice.toFixed(5)}`);
-      }
 
       trade.status = 'CLOSED';
       trade.exitPrice = finalExitPrice;
