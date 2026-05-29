@@ -108,7 +108,7 @@ def main():
         print(json.dumps(result))
         
     except Exception as e:
-        print(json.dumps({"status": "error", "message": str(e)}))
+        sys.stderr.write(str(e))
         sys.exit(1)
 
 if __name__ == "__main__":

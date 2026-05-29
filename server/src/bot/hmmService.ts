@@ -41,9 +41,9 @@ export class HMMService {
 
             pythonProcess.on('close', (code) => {
                 if (code !== 0) {
-                    console.error(`Python HMM script exited with code ${code}`);
-                    console.error(errorString);
-                    reject(new Error(`HMM Script Failed: ${errorString}`));
+                    const finalError = errorString || dataString || 'Unknown Python Error';
+                    console.error(`[HMM] Script exited with code ${code}: ${finalError}`);
+                    reject(new Error(`HMM Script Failed: ${finalError}`));
                     return;
                 }
 
