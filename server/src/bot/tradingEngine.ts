@@ -426,10 +426,16 @@ export class TradingEngine {
     if (this.config.mode !== 'DEMO' && this.binanceClient) {
       try {
         const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity);
-        const fillPrice = order.fills && order.fills.length > 0 
-          ? parseFloat(order.fills[0].price) 
-          : price;
-        const fillQty = order.executedQty ? parseFloat(order.executedQty) : quantity;
+        const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
+          ? parseFloat(order.avgPrice)
+          : (order.fills && order.fills.length > 0 
+            ? parseFloat(order.fills[0].price) 
+            : price);
+        const fillQty = (order.executedQty && parseFloat(order.executedQty) > 0)
+          ? parseFloat(order.executedQty)
+          : (order.origQty && parseFloat(order.origQty) > 0
+            ? parseFloat(order.origQty)
+            : quantity);
 
         const trade: Trade = {
           id: order.orderId.toString(),
@@ -493,9 +499,11 @@ export class TradingEngine {
       try {
         const exitSide = trade.side === 'BUY' ? 'SELL' : 'BUY';
         const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity);
-        const fillPrice = order.fills && order.fills.length > 0 
-          ? parseFloat(order.fills[0].price) 
-          : price;
+        const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
+          ? parseFloat(order.avgPrice)
+          : (order.fills && order.fills.length > 0 
+            ? parseFloat(order.fills[0].price) 
+            : price);
         
         // Finalize Trade structure
         trade.status = 'CLOSED';
