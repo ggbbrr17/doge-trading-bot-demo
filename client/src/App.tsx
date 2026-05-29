@@ -181,6 +181,7 @@ export default function App() {
   const [priceDirection, setPriceDirection] = useState<'UP' | 'DOWN' | 'STABLE'>('STABLE');
   const lastPriceRef = useRef<number>(0.42);
   const socketRef = useRef<WebSocket | null>(null);
+  const isFirstLoadRef = useRef(true);
   const [isUpdatingConfig, setIsUpdatingConfig] = useState(false);
 
   // Success confetti trigger on trade win
@@ -261,18 +262,21 @@ export default function App() {
     };
   }, []);
 
-  // Update visual configuration form fields when server config loads
+  // Update visual configuration form fields when server config loads (only on first load to prevent overwriting active typing)
   useEffect(() => {
-    setEditApiKey(config.binanceApiKey || '');
-    setEditApiSecret(config.binanceApiSecret || '');
-    setEditGeminiApiKey(config.geminiApiKey || '');
-    setEditTradeSize(config.tradeSizeUSDT);
-    setEditMode(config.mode);
-    setEditMarketType(config.marketType || 'SPOT');
-    setEditLeverage(config.leverage || 5);
-    setEditTelegramBotToken(config.telegramBotToken || '');
-    setEditTelegramChatId(config.telegramChatId || '');
-  }, [config]);
+    if (config && isFirstLoadRef.current && isConnected) {
+      setEditApiKey(config.binanceApiKey || '');
+      setEditApiSecret(config.binanceApiSecret || '');
+      setEditGeminiApiKey(config.geminiApiKey || '');
+      setEditTradeSize(config.tradeSizeUSDT);
+      setEditMode(config.mode);
+      setEditMarketType(config.marketType || 'SPOT');
+      setEditLeverage(config.leverage || 5);
+      setEditTelegramBotToken(config.telegramBotToken || '');
+      setEditTelegramChatId(config.telegramChatId || '');
+      isFirstLoadRef.current = false;
+    }
+  }, [config, isConnected]);
 
   // Trigger server actions
   const toggleBot = async () => {

@@ -109,6 +109,13 @@ export class TradingEngine {
     };
 
     this.loadState();
+
+    // Propagate loaded API key to AI services on startup
+    if (this.config.geminiApiKey) {
+      this.gemmaService.updateApiKey(this.config.geminiApiKey);
+      this.evolutionEngine.updateApiKey(this.config.geminiApiKey);
+    }
+
     this.initializeBinance();
     this.initializeTelegram();
     this.seedCandles();
