@@ -110,7 +110,27 @@ export class BinanceClient {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       return (await response.json()) as any[];
     } catch (error) {
-      console.error(`Error fetching Klines for ${symbol}:`, error);
+      console.warn(`Binance getKlines blocked or failed. Attempting KuCoin fallback. Error: ${error}`);
+      try {
+        const kucoinInterval = interval === '1m' ? '1min' : '1min';
+        const kucoinUrl = `https://api.kucoin.com/api/v1/market/candles?symbol=DOGE-USDT&type=${kucoinInterval}`;
+        const kResponse = await fetch(kucoinUrl);
+        if (!kResponse.ok) throw new Error(`KuCoin API error status: ${kResponse.status}`);
+        const kData = await kResponse.json();
+        if (kData.code === '200000' && Array.isArray(kData.data)) {
+          const rawCandles = [...kData.data].reverse().slice(-limit);
+          return rawCandles.map((c: any) => [
+            parseInt(c[0]) * 1000, 
+            c[1],                  
+            c[3],                  
+            c[4],                  
+            c[2],                  
+            c[5]                   
+          ]);
+        }
+      } catch (fallbackError) {
+        console.error('KuCoin fallback for getKlines failed:', fallbackError);
+      }
       throw error;
     }
   }
@@ -125,7 +145,18 @@ export class BinanceClient {
       const data = (await response.json()) as { price: string };
       return parseFloat(data.price);
     } catch (error) {
-      console.error(`Error fetching price for ${symbol}:`, error);
+      console.warn(`Binance getTickerPrice failed. Attempting KuCoin fallback. Error: ${error}`);
+      try {
+        const kucoinUrl = 'https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=DOGE-USDT';
+        const kResponse = await fetch(kucoinUrl);
+        if (!kResponse.ok) throw new Error(`KuCoin API error status: ${kResponse.status}`);
+        const kData = await kResponse.json();
+        if (kData.code === '200000' && kData.data && kData.data.price) {
+          return parseFloat(kData.data.price);
+        }
+      } catch (fallbackError) {
+        console.error('KuCoin fallback for getTickerPrice failed:', fallbackError);
+      }
       throw error;
     }
   }
