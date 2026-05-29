@@ -118,6 +118,7 @@ app.get('*', (req: Request, res: Response) => {
 if (engine.getStatePayload().config.isRunning) {
   // Turn it off first to avoid double tickers
   engine.updateConfig({ isRunning: false });
+  engine.startBot();
 }
 
 // WebSocket connection handler

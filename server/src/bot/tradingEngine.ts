@@ -250,7 +250,9 @@ export class TradingEngine {
         stats: this.stats,
         trades: this.trades,
       };
-      fs.writeFileSync(this.stateFilePath, JSON.stringify(stateToSave, null, 2), 'utf-8');
+      const tempPath = `${this.stateFilePath}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(stateToSave, null, 2), 'utf-8');
+      fs.renameSync(tempPath, this.stateFilePath);
     } catch (error) {
       console.error('Error saving system state:', error);
     }
@@ -829,7 +831,7 @@ export class TradingEngine {
     const saved = { token: this.config.telegramBotToken, chatId: this.config.telegramChatId };
     this.config.telegramBotToken = token;
     this.config.telegramChatId = chatId;
-    this.sendTelegramMessage('🤖 *Test de Telegram exitoso* — Bot DOGE/USDT conectado correctamente.')
+    this.sendTelegramMessage('🤖 *Test de Telegram exitoso* — Bot DOGE/USDT conectado correctamente.', true)
       .then(() => {
         this.log(`Test de Telegram completado. Guardando credenciales.`);
         this.saveState();
@@ -841,7 +843,7 @@ export class TradingEngine {
       });
   }
 
-  private async sendTelegramMessage(text: string) {
+  private async sendTelegramMessage(text: string, throwError: boolean = false) {
     const token = this.config.telegramBotToken;
     const chatId = this.config.telegramChatId;
 
@@ -859,7 +861,7 @@ export class TradingEngine {
       }
     } catch (error: any) {
       this.log(`Telegram notification error: ${error.message}`);
-      throw error;
+      if (throwError) throw error;
     }
   }
 }
