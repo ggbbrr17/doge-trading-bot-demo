@@ -19,6 +19,7 @@ server/.env
 
 # Local state
 server/trading_state.json
+server/trades.json
 
 # Logs
 *.log

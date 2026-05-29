@@ -7,7 +7,7 @@
 
   color-scheme: dark;
   color: #e2e8f0;
-  background-color: #050508;
+  background-color: #000000;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -15,9 +15,9 @@
   -moz-osx-font-smoothing: grayscale;
 
   /* Custom Color Tokens */
-  --bg-darker: #050509;
-  --bg-card: rgba(10, 10, 15, 0.4);
-  --border-card: rgba(255, 255, 255, 0.06);
+  --bg-darker: #000000;
+  --bg-card: rgba(10, 10, 10, 0.6);
+  --border-card: rgba(255, 255, 255, 0.04);
   --border-glow-cyan: rgba(0, 229, 255, 0.15);
   --border-glow-green: rgba(0, 255, 136, 0.15);
 
@@ -45,7 +45,7 @@ body {
   margin: 0;
   width: 100%;
   min-height: 100vh;
-  background: #050508;
+  background: #000000;
   background-attachment: fixed;
   overflow-x: hidden;
   position: relative;
@@ -60,8 +60,8 @@ body::before {
   width: 100%;
   height: 100%;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.005) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.005) 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.003) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.003) 1px, transparent 1px);
   background-size: 30px 30px;
   pointer-events: none;
   z-index: 0;
@@ -71,10 +71,10 @@ body::before {
 .cyber-card {
   background: var(--bg-card);
   border: 1px solid var(--border-card);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   border-radius: 12px;
-  box-shadow: 0 4px 30px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.4);
   padding: 1.5rem;
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
   position: relative;

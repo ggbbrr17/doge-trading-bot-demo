@@ -4,6 +4,7 @@ import * as WebSocket from 'ws';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
 import { TradingEngine } from './bot/tradingEngine';
+import { saveTradeToHistory } from './persistence';
 
 dotenv.config();
 
@@ -17,6 +18,9 @@ const wss = new WebSocket.Server({ server });
 const PORT = process.env.PORT || 5000;
 const engine = new TradingEngine();
 
+// Registro interno para evitar duplicados en el archivo JSON
+const processedTradeStates = new Set<string>();
+
 // Broadcast trading engine state payload to all connected clients
 const broadcastState = () => {
   const payload = JSON.stringify(engine.getStatePayload());
@@ -29,6 +33,17 @@ const broadcastState = () => {
 
 // Hook trading engine updates to WebSocket broadcast
 engine.registerUpdateCallback(() => {
+  const state = engine.getStatePayload();
+
+  // Monitorear trades para persistencia automática
+  state.trades.forEach((trade: any) => {
+    const stateKey = `${trade.id}-${trade.status}`;
+    if (!processedTradeStates.has(stateKey)) {
+      saveTradeToHistory(trade);
+      processedTradeStates.add(stateKey);
+    }
+  });
+
   broadcastState();
 });
 

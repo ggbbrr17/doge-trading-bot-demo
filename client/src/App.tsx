@@ -137,7 +137,6 @@ export default function App() {
   const [priceDirection, setPriceDirection] = useState<'UP' | 'DOWN' | 'STABLE'>('STABLE');
   const lastPriceRef = useRef<number>(0.42);
   const socketRef = useRef<WebSocket | null>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const [isUpdatingConfig, setIsUpdatingConfig] = useState(false);
 
   // Success confetti trigger on trade win
@@ -975,7 +974,6 @@ export default function App() {
               {logs.length === 0 && (
                 <div className="text-slate-600 italic">Waiting for quantum state stream...</div>
               )}
-              <div ref={logsEndRef} />
             </div>
           </div>
 
