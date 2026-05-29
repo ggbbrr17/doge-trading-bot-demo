@@ -76,6 +76,7 @@ interface BotConfig {
   gridLayers: number;
   marketType: 'SPOT' | 'FUTURES';
   leverage: number; // Only for FUTURES
+  dailyProfitTarget?: number;
   telegramBotToken?: string;
   telegramChatId?: string;
 }
