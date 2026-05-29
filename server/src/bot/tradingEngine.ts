@@ -283,6 +283,7 @@ export class TradingEngine {
     
     if (newConfig.geminiApiKey !== undefined) {
       this.gemmaService.updateApiKey(newConfig.geminiApiKey);
+      this.evolutionEngine.updateApiKey(newConfig.geminiApiKey);
     }
 
     // Recalculate demo balance stats if changed back to demo

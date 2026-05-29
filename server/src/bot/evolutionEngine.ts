@@ -150,7 +150,14 @@ export class EvolutionEngine {
     return formulas[this.generation % formulas.length];
   }
 
-  private geminiApiKey = 'AIzaSyCD6RNHN1FJ-OQxtasRTgJ2dOzUvRLrhnk';
+  private geminiApiKey = process.env.GEMINI_API_KEY || '';
+
+  updateApiKey(apiKey: string) {
+    if (apiKey) {
+      this.geminiApiKey = apiKey;
+      this.log(`Gemini API key updated dynamically for EvolutionEngine.`);
+    }
+  }
 
   private async callGemini(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
