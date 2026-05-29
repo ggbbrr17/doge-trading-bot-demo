@@ -206,7 +206,9 @@ export default function App() {
   // Connect to backend WS server
   useEffect(() => {
     const connectWS = () => {
-      const socket = new WebSocket('ws://localhost:5000');
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = window.location.hostname === 'localhost' ? 'ws://localhost:5000' : `${wsProtocol}//${window.location.host}`;
+      const socket = new WebSocket(wsUrl);
       socketRef.current = socket;
 
       socket.onopen = () => {
@@ -279,8 +281,9 @@ export default function App() {
   // Trigger server actions
   const toggleBot = async () => {
     const endpoint = config.isRunning ? 'stop' : 'start';
+    const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
     try {
-      await fetch(`http://localhost:5000/api/${endpoint}`, { method: 'POST' });
+      await fetch(`${apiBase}/api/${endpoint}`, { method: 'POST' });
     } catch (e) {
       console.error(`Error toggling bot to ${endpoint}:`, e);
     }
@@ -289,8 +292,9 @@ export default function App() {
   const saveConfiguration = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsUpdatingConfig(true);
+    const apiBase = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
     try {
-      const response = await fetch('http://localhost:5000/api/config', {
+      const response = await fetch(`${apiBase}/api/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
