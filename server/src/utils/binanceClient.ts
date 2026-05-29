@@ -17,7 +17,7 @@ export class BinanceClient {
     this.apiKey = config.apiKey;
     this.apiSecret = config.apiSecret;
     this.isFutures = config.marketType === 'FUTURES';
-    
+
     if (this.isFutures) {
       this.baseUrl = config.isTestnet
         ? 'https://demo-fapi.binance.com'
@@ -80,7 +80,7 @@ export class BinanceClient {
     try {
       const response = await fetch(url, { method, headers });
       const responseText = await response.text();
-      
+
       let data;
       try {
         data = JSON.parse(responseText);
@@ -120,12 +120,12 @@ export class BinanceClient {
         if (kData.code === '200000' && Array.isArray(kData.data)) {
           const rawCandles = [...kData.data].reverse().slice(-limit);
           return rawCandles.map((c: any) => [
-            parseInt(c[0]) * 1000, 
-            c[1],                  
-            c[3],                  
-            c[4],                  
-            c[2],                  
-            c[5]                   
+            parseInt(c[0]) * 1000,
+            c[1],
+            c[3],
+            c[4],
+            c[2],
+            c[5]
           ]);
         }
       } catch (fallbackError) {
@@ -173,13 +173,14 @@ export class BinanceClient {
     side: 'BUY' | 'SELL',
     type: 'LIMIT' | 'MARKET',
     quantity: number,
-    price?: number
+    price?: number,
+    reduceOnly?: boolean
   ): Promise<any> {
     const endpoint = this.isFutures ? '/fapi/v1/order' : '/api/v3/order';
-    
+
     // Futures DOGE contracts require integer quantities (0 decimals)
-    const formattedQty = this.isFutures 
-      ? Math.round(quantity).toString() 
+    const formattedQty = this.isFutures
+      ? Math.round(quantity).toString()
       : quantity.toFixed(2);
 
     const params: Record<string, string> = {
@@ -195,6 +196,10 @@ export class BinanceClient {
       }
       params.price = price.toFixed(5); // DOGE USDT supports 5 decimal places for price
       params.timeInForce = 'GTC'; // Good Til Canceled
+    }
+
+    if (this.isFutures && reduceOnly) {
+      params.reduceOnly = 'true';
     }
 
     return this.signedRequest(endpoint, 'POST', params);

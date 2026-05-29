@@ -296,7 +296,7 @@ export class TradingEngine {
     this.config = { ...this.config, ...newConfig };
     this.initializeBinance();
     this.initializeTelegram(); // Re-initialize Telegram on config update
-    
+
     if (newConfig.geminiApiKey !== undefined) {
       this.gemmaService.updateApiKey(newConfig.geminiApiKey);
       this.evolutionEngine.updateApiKey(newConfig.geminiApiKey);
@@ -353,7 +353,7 @@ export class TradingEngine {
             this.log(`AI Evolution cycle failed: ${err.message}`);
           });
         }
-        
+
         // 5.2 Trigger periodic Telegram summary
         await this.sendPeriodicSummary();
       }
@@ -550,9 +550,9 @@ export class TradingEngine {
     if (!this.isHmmFetching && now - this.lastHmmFetchTime > CACHE_TTL_MS) {
       this.isHmmFetching = true;
       this.log('🤖 [HMM] Analyzing mathematical market regimes using Hidden Markov Models...');
-      
+
       const volumes = this.candles.map(c => c.volume);
-      
+
       hmmService.getCurrentRegime(this.pricesBuffer, volumes).then((regime) => {
         this.currentRegime = regime;
         this.lastHmmFetchTime = Date.now();
@@ -673,10 +673,17 @@ export class TradingEngine {
   private async executeExit(trade: Trade, price: number, reason: string) {
     this.log(`Closing position vector ${trade.id} @ $${price.toFixed(5)}... Reason: ${reason}`);
 
-    if (this.config.mode !== 'DEMO' && this.binanceClient && trade.type !== 'SIMULATED') {
+    // Si la operación fue originalmente real o de testnet, intentamos cerrarla en Binance 
+    // incluso si el modo actual del bot es DEMO, para evitar acumulación de posiciones en el exchange.
+    const isRealTrade = trade.type === 'TESTNET' || trade.type === 'REAL';
+
+    if (isRealTrade && this.binanceClient) {
       try {
         const exitSide = trade.side === 'BUY' ? 'SELL' : 'BUY';
-        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity);
+        // En FUTURES usamos reduceOnly: true para asegurar que solo cerramos el volumen actual
+        const isFutures = this.config.marketType === 'FUTURES';
+        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity, undefined, isFutures);
+
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)
           : (order.fills && order.fills.length > 0
@@ -713,7 +720,7 @@ export class TradingEngine {
       } catch (e: any) {
         this.log(`ERROR: Binance failed to close position: ${e.message}`);
       }
-    } else {
+    } else if (trade.type === 'SIMULATED' || (isRealTrade && !this.binanceClient)) {
       // SIMULATED PAPER TRADING EXIT
       let finalExitPrice = price;
 
@@ -963,7 +970,7 @@ export class TradingEngine {
       const lossCount = recentClosed.length - winCount;
       const emoji = recentNetProfit >= 0 ? '🤑' : '📉';
       closedSummary = `Se cerraron ${recentClosed.length} operaciones (${winCount}W / ${lossCount}L).\n` +
-                      `PnL del periodo: ${emoji} $${recentNetProfit.toFixed(2)}`;
+        `PnL del periodo: ${emoji} $${recentNetProfit.toFixed(2)}`;
     }
 
     // 3. Market Summary from Gemma
@@ -974,10 +981,10 @@ export class TradingEngine {
 
     // Construct the final message
     const message = `*DOGE Bot | Reporte de 3 Horas* 🕒\n\n` +
-                    `*1️⃣ Operaciones Abiertas (${openTrades.length})*\n${openSummary}\n\n` +
-                    `*2️⃣ Actividad Reciente*\n${closedSummary}\n\n` +
-                    `*3️⃣ Régimen de Mercado (HMM)*\n🧠 Detectado: \`${regimeStr}\`\n\n` +
-                    `*4️⃣ Visión del Mercado & Noticias*\n${marketNews}`;
+      `*1️⃣ Operaciones Abiertas (${openTrades.length})*\n${openSummary}\n\n` +
+      `*2️⃣ Actividad Reciente*\n${closedSummary}\n\n` +
+      `*3️⃣ Régimen de Mercado (HMM)*\n🧠 Detectado: \`${regimeStr}\`\n\n` +
+      `*4️⃣ Visión del Mercado & Noticias*\n${marketNews}`;
 
     await this.sendTelegramMessage(message);
     this.log('✅ Reporte de 3 horas enviado a Telegram exitosamente.');

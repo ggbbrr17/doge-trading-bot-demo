@@ -26,7 +26,7 @@ export class HMMService {
      */
     public async getCurrentRegime(closes: number[] = [], volumes: number[] = []): Promise<HMMResult> {
         return new Promise((resolve, reject) => {
-            const pythonProcess = spawn('python', [this.pythonScriptPath]);
+            const pythonProcess = spawn('python3', [this.pythonScriptPath]);
 
             let dataString = '';
             let errorString = '';
