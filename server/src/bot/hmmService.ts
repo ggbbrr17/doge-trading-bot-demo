@@ -27,7 +27,7 @@ export class HMMService {
     public async getCurrentRegime(closes: number[] = [], volumes: number[] = []): Promise<HMMResult> {
         return new Promise((resolve, reject) => {
             const pythonProcess = spawn('python', [this.pythonScriptPath]);
-            
+
             let dataString = '';
             let errorString = '';
 
@@ -46,11 +46,11 @@ export class HMMService {
                     reject(new Error(`HMM Script Failed: ${errorString}`));
                     return;
                 }
-                
+
                 try {
                     const result = JSON.parse(dataString);
                     resolve(result);
-                } catch (e) {
+                } catch (e: any) {
                     console.error('Failed to parse HMM output', dataString);
                     reject(new Error(`Invalid JSON from HMM: ${e.message}`));
                 }
