@@ -760,12 +760,20 @@ export class TradingEngine {
   }
 
   public sendTelegramTest(token: string, chatId: string) {
+    this.log(`Enviando mensaje de prueba de Telegram con Token: ${token.substring(0, 10)}... y Chat ID: ${chatId}`);
     const saved = { token: this.config.telegramBotToken, chatId: this.config.telegramChatId };
     this.config.telegramBotToken = token;
     this.config.telegramChatId = chatId;
-    this.sendTelegramMessage('🤖 *Test de Telegram exitoso* — Bot DOGE/USDT conectado correctamente.');
-    this.config.telegramBotToken = saved.token;
-    this.config.telegramChatId = saved.chatId;
+    this.sendTelegramMessage('🤖 *Test de Telegram exitoso* — Bot DOGE/USDT conectado correctamente.')
+      .then(() => {
+        this.log(`Test de Telegram completado. Guardando credenciales.`);
+        this.saveState();
+      })
+      .catch((err) => {
+        this.log(`Error al enviar mensaje de prueba: ${err.message}`);
+        this.config.telegramBotToken = saved.token;
+        this.config.telegramChatId = saved.chatId;
+      });
   }
 
   private async sendTelegramMessage(text: string) {
@@ -775,13 +783,18 @@ export class TradingEngine {
     if (!token || !chatId) return;
 
     try {
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: 'Markdown' })
       });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Telegram API responded with status ${response.status}: ${errorText}`);
+      }
     } catch (error: any) {
-      console.error(`Telegram notification error: ${error.message}`);
+      this.log(`Telegram notification error: ${error.message}`);
+      throw error;
     }
   }
 }
