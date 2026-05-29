@@ -577,7 +577,8 @@ export class StrategyManager {
     hasActiveTrade: boolean = false,
     averageEntryPrice: number = 0,
     tradeStats: { winRate: number; avgWin: number; avgLoss: number } = { winRate: 0.5, avgWin: 0.01, avgLoss: 0.008 },
-    genes?: MathGenes
+    genes?: MathGenes,
+    gemmaSignal?: { action: 'BUY' | 'SELL' | 'HOLD'; confidence: number; reason: string } | null
   ): StrategySignal {
     // Run all 4 strategies
     const oracle = this.getTemporalOracleSignal(indicators, [], priceHistory, genes);
@@ -587,6 +588,11 @@ export class StrategyManager {
 
     const votes = [oracle, statArb, kalmanHurst, kelly];
     const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion'];
+
+    if (gemmaSignal) {
+      votes.push(gemmaSignal);
+      names.push('Gemma 4 Crecetrader');
+    }
 
     // Weighted vote tally
     let buyScore = 0;
