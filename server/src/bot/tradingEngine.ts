@@ -290,14 +290,11 @@ export class TradingEngine {
     try {
       // 1. Fetch current price
       let currentPrice = 0;
-      if (this.config.mode !== 'DEMO' && this.binanceClient) {
-        try {
-          currentPrice = await this.binanceClient.getTickerPrice('DOGEUSDT');
-        } catch (e: any) {
-          this.log(`Binance API Connection issue: ${e.message}. Using synthetic price.`);
-          currentPrice = this.generateNextSimulatedPrice();
-        }
-      } else {
+      try {
+        const client = new BinanceClient({ apiKey: '', apiSecret: '', isTestnet: false, marketType: 'SPOT' });
+        currentPrice = await client.getTickerPrice('DOGEUSDT');
+      } catch (e: any) {
+        this.log(`Binance public feed unavailable: ${e.message}. Using synthetic fallback.`);
         currentPrice = this.generateNextSimulatedPrice();
       }
 
@@ -430,44 +427,19 @@ export class TradingEngine {
     // Get dynamically evolved mathematical genes
     const genes = this.evolutionEngine.getActiveGenes();
 
-    let signal: StrategySignal = { action: 'HOLD', confidence: 0, reason: 'Waiting for evaluation.' };
-
-    switch (this.config.strategy) {
-      case 'ORACLE':
-        // Binomial Distribution Oracle — uses real price history & genes
-        signal = this.strategyManager.getTemporalOracleSignal(
-          indicators,
-          [],
-          this.pricesBuffer,
-          genes
-        );
-        break;
-
-      case 'GRID_DCA':
-        // Z-Score Statistical Arbitrage
-        signal = this.strategyManager.getGridDcaSignal(
-          indicators,
-          hasActiveTrade,
-          averageEntryPrice,
-          this.pricesBuffer,
-          genes
-        );
-        break;
-
-      case 'NEURAL_NETWORK':
-        // Kalman Filter + Hurst Exponent regime detection
-        signal = this.strategyManager.getAiNeuralNetSignal(indicators, this.pricesBuffer, genes);
-        break;
-
-      case 'CONSERVATIVE':
-        // Kelly Criterion + Variance Ratio
-        signal = this.strategyManager.getConservativeSignal(indicators, this.pricesBuffer, tradeStats, genes);
-        break;
-    }
+    // Use the new Unified Strategy voting process to get the signal
+    const signal: StrategySignal = this.strategyManager.getUnifiedSignal(
+      indicators,
+      this.pricesBuffer,
+      hasActiveTrade,
+      averageEntryPrice,
+      tradeStats,
+      genes
+    );
 
     // Process Signal Action
     if (signal.action === 'BUY' && !hasActiveTrade) {
-      this.log(`AI strategy [${this.config.strategy}] generated BUY signal! Reason: ${signal.reason}`);
+      this.log(`AI Unified strategy generated BUY signal! Reason: ${signal.reason}`);
       await this.executeEntry('BUY', indicators.currentPrice, signal.reason);
 
       // Send Telegram notification for entry
@@ -478,12 +450,13 @@ export class TradingEngine {
         `*Reason:* ${signal.reason}`;
       this.sendTelegramMessage(telegramMsg);
     } else if (signal.action === 'SELL' && hasActiveTrade) {
-      this.log(`AI strategy [${this.config.strategy}] generated SELL signal! Reason: ${signal.reason}`);
+      this.log(`AI Unified strategy generated SELL signal! Reason: ${signal.reason}`);
       for (const openTrade of openTrades) {
         await this.executeExit(openTrade, indicators.currentPrice, signal.reason);
       }
-    } else if (signal.action === 'BUY' && hasActiveTrade && this.config.strategy === 'GRID_DCA') {
-      this.log(`AI strategy [${this.config.strategy}] triggered DCA buy! Reason: ${signal.reason}`);
+    } else if (signal.action === 'BUY' && hasActiveTrade) {
+      // Allow safety orders/DCA buy signals if the unified signal suggests it (e.g. from voters)
+      this.log(`AI Unified strategy triggered DCA buy! Reason: ${signal.reason}`);
       await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`);
 
       // Send Telegram notification for DCA entry
@@ -784,6 +757,15 @@ export class TradingEngine {
       neuralNetwork: this.neuralNet.getWeightsAndNeurons(),
       evolution: this.evolutionEngine.getStats(),
     };
+  }
+
+  public sendTelegramTest(token: string, chatId: string) {
+    const saved = { token: this.config.telegramBotToken, chatId: this.config.telegramChatId };
+    this.config.telegramBotToken = token;
+    this.config.telegramChatId = chatId;
+    this.sendTelegramMessage('🤖 *Test de Telegram exitoso* — Bot DOGE/USDT conectado correctamente.');
+    this.config.telegramBotToken = saved.token;
+    this.config.telegramChatId = saved.chatId;
   }
 
   private async sendTelegramMessage(text: string) {

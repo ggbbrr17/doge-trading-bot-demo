@@ -85,6 +85,19 @@ app.post('/api/config', (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/send-telegram-test', (req: Request, res: Response) => {
+  try {
+    const { token, chatId } = req.body;
+    if (!token || !chatId) {
+      return res.status(400).json({ success: false, error: 'Missing token or chatId' });
+    }
+    engine.sendTelegramTest(token, chatId);
+    res.json({ success: true, message: 'Test message sent to Telegram.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Fallback to serve index.html for SPA routing
 app.get('*', (req: Request, res: Response) => {
   res.sendFile(path.join(clientDistPath, 'index.html'));
