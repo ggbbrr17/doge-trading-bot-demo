@@ -19,6 +19,8 @@ export interface TechnicalIndicators {
   fractalDimension: number;
   efficiencyRatio: number;
   botActivity: number;
+  spectralEnergy: number; // Fuerza del ciclo dominante
+  cyclePhase: number;    // Fase del ciclo (-1 a 1, Valle a Cima)
   htfAlignment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   currentPrice: number;
 }
@@ -143,6 +145,51 @@ function kalmanFilter(prices: number[], noiseRatio = 0.005): { filtered: number[
   const acceleration = n >= 3 ? (filtered[n - 1] - filtered[n - 2]) - (filtered[n - 2] - filtered[n - 3]) : 0;
 
   return { filtered, velocity, acceleration };
+}
+
+/**
+ * FOURIER SPECTRAL ANALYSIS
+ * Transforma el dominio del tiempo al dominio de la frecuencia.
+ * Identifica el ciclo dominante y su fase actual.
+ */
+function fourierSpectralAnalysis(prices: number[], window: number = 64): { energy: number, phase: number } {
+  if (prices.length < window) return { energy: 0, phase: 0 };
+
+  const n = window;
+  const signal = prices.slice(-n);
+  const mean = signal.reduce((a, b) => a + b, 0) / n;
+  const detrended = signal.map(p => p - mean);
+
+  let maxMagnitude = 0;
+  let dominantFreq = 0;
+  let phaseAtMax = 0;
+
+  // Calculamos la DFT para las frecuencias de interés (excluyendo DC y ruido extremo)
+  for (let k = 1; k < n / 2; k++) {
+    let re = 0;
+    let im = 0;
+    for (let t = 0; t < n; t++) {
+      const angle = (2 * Math.PI * k * t) / n;
+      re += detrended[t] * Math.cos(angle);
+      im -= detrended[t] * Math.sin(angle);
+    }
+
+    const magnitude = Math.sqrt(re * re + im * im);
+    if (magnitude > maxMagnitude) {
+      maxMagnitude = magnitude;
+      dominantFreq = k;
+      phaseAtMax = Math.atan2(im, re);
+    }
+  }
+
+  // Calculamos la fase actual del ciclo dominante en el último tick
+  const currentPhase = Math.sin((2 * Math.PI * dominantFreq * (n - 1)) / n + phaseAtMax);
+
+  // Energy es la magnitud normalizada (relación señal/ruido)
+  const totalEnergy = detrended.reduce((a, b) => a + b * b, 0);
+  const energy = totalEnergy > 0 ? (maxMagnitude * maxMagnitude) / totalEnergy : 0;
+
+  return { energy, phase: currentPhase };
 }
 
 /**
@@ -320,6 +367,7 @@ export function calculateIndicators(prices: number[], candles: any[] = []): Tech
 
   const fdi = fractalDimension(prices);
   const er = efficiencyRatio(prices);
+  const spectral = fourierSpectralAnalysis(prices);
 
   // 3. Bot Activity Index (Volume Density)
   // Mide si hay un volumen inusual concentrado en movimientos eficientes (Algoritmos)
@@ -347,7 +395,7 @@ export function calculateIndicators(prices: number[], candles: any[] = []): Tech
     rsi, macd: { macd: macdVal, signal: signalVal, hist },
     ema: { ema20, ema50, ema200 },
     bollinger: { upper, middle, lower, width },
-    atr, vwap, fractalDimension: fdi, efficiencyRatio: er, botActivity, htfAlignment, currentPrice,
+    atr, vwap, fractalDimension: fdi, efficiencyRatio: er, botActivity, spectralEnergy: spectral.energy, cyclePhase: spectral.phase, htfAlignment, currentPrice,
   };
 }
 
@@ -805,6 +853,44 @@ export class StrategyManager {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // STRATEGY 8: SPECTRAL FOURIER CYCLE (Frequency Domain Edge)
+  // ───────────────────────────────────────────────────────────────────────────
+  getFourierCycleSignal(indicators: TechnicalIndicators): StrategySignal {
+    const { spectralEnergy, cyclePhase, currentPrice, vwap, htfAlignment } = indicators;
+
+    // Un spectralEnergy alto (> 0.4) indica que hay un ciclo dominante muy claro (no es ruido)
+    const hasStableCycle = spectralEnergy > 0.4;
+
+    // Cycle Phase: -1 (Valle), 0 (Cruce), 1 (Cima)
+    const isCyclicLow = cyclePhase < -0.8;
+    const isCyclicHigh = cyclePhase > 0.8;
+
+    if (hasStableCycle && isCyclicLow && htfAlignment !== 'BEARISH') {
+      return {
+        action: 'BUY',
+        confidence: 0.90,
+        reason: `Fourier Spectral: Detectado valle en ciclo dominante (Energía: ${spectralEnergy.toFixed(2)}). El mercado está en fase de acumulación cíclica.`,
+      };
+    }
+
+    if (hasStableCycle && isCyclicHigh) {
+      return {
+        action: 'SELL',
+        confidence: 0.88,
+        reason: `Fourier Spectral: Detectada cima en ciclo dominante. Fase de distribución cíclica alcanzada. Probable reversión.`,
+      };
+    }
+
+    return {
+      action: 'HOLD',
+      confidence: 0.5,
+      reason: spectralEnergy > 0.2
+        ? `Fourier Spectral: Ciclo en fase neutra (${cyclePhase.toFixed(2)}).`
+        : `Fourier Spectral: Mercado ruidoso (Baja energía espectral).`,
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // UNIFIED SUPER STRATEGY — Democratic Weighted Voting across all 4 models
   // Each strategy votes BUY or SELL with its confidence. HOLD = abstain.
   // Final decision = highest weighted vote score above minimum quorum.
@@ -827,6 +913,7 @@ export class StrategyManager {
     const quant = this.getInstitutionalQuantSignal(indicators);
     const botHerd = this.getBotHerdSignal(indicators);
     const omega = this.getOmegaInversionSignal(indicators, priceHistory);
+    const spectral = this.getFourierCycleSignal(indicators);
 
     // Modify strategy weighting based on the detected HMM market regime
     // Trend strategies: Oracle, KalmanHurst
@@ -858,8 +945,8 @@ export class StrategyManager {
     kalmanHurst.confidence = Math.min(0.99, kalmanHurst.confidence);
     kelly.confidence = Math.min(0.99, kelly.confidence);
 
-    const votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega];
-    const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion', 'Fractal Quant', 'Algo Herd Sensor', 'Omega Inversion'];
+    const votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega, spectral];
+    const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion', 'Fractal Quant', 'Algo Herd Sensor', 'Omega Inversion', 'Fourier Spectral'];
 
     if (gemmaSignal) {
       votes.push(gemmaSignal);
