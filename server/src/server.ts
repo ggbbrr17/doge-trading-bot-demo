@@ -1,14 +1,14 @@
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 import express, { Request, Response } from 'express';
 import * as http from 'http';
 import * as WebSocket from 'ws';
 import cors from 'cors';
-import * as dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import * as path from 'path';
 import { TradingEngine } from './bot/tradingEngine';
 import { saveTradeToHistory } from './persistence';
-
-dotenv.config();
 
 // Auto-restart on unhandled errors: Exiting with code 1 signals Render to restart the container
 process.on('uncaughtException', (error) => {
@@ -142,9 +142,18 @@ wss.on('connection', (ws) => {
 });
 
 // Start Server
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/doge-bot';
+const MONGODB_URI = process.env.MONGODB_URI || '';
 
-mongoose.connect(MONGODB_URI)
+if (!MONGODB_URI) {
+  console.error('❌ CRITICAL: MONGODB_URI is not defined in environment variables.');
+  process.exit(1);
+}
+
+mongoose.connect(MONGODB_URI, {
+  serverSelectionTimeoutMS: 10000, // Aumentamos el tiempo de espera
+  heartbeatFrequencyMS: 2000,      // Mantiene la conexión viva
+  socketTimeoutMS: 45000,
+})
   .then(async () => {
     console.log('✨ Connected to MongoDB Atlas');
 

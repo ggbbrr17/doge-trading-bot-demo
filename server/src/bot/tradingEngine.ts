@@ -120,6 +120,8 @@ export class TradingEngine {
       telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     };
 
+    this.log(`[Startup] Env Check: Gemini=${this.config.geminiApiKey ? 'YES' : 'NO'}, Binance=${this.config.binanceApiKey ? 'YES' : 'NO'}, Telegram=${this.config.telegramBotToken ? 'YES' : 'NO'}`);
+
     this.stats = {
       totalBalanceUSDT: 10000.0,
       dogeBalance: 0.0,
@@ -326,14 +328,24 @@ export class TradingEngine {
       if (state) {
         // Combinar configuración guardada, pero asegurar que no sobreescribimos con vacíos si hay env vars
         const savedConfig = state.config || {};
-        this.config = { ...this.config, ...savedConfig };
+
+        // Solo sobrescribir si el valor guardado en DB no es un string vacío
+        Object.keys(savedConfig).forEach(key => {
+          const val = (savedConfig as any)[key];
+          if (val !== "" && val !== null && val !== undefined) {
+            (this.config as any)[key] = val;
+          }
+        });
+
         if (state.stats) this.stats = { ...this.stats, ...state.stats };
       }
 
-      // Fallback: Si después de cargar de DB las llaves están vacías, usar las de Render (env vars)
-      if (!this.config.geminiApiKey) this.config.geminiApiKey = process.env.GEMINI_API_KEY || '';
-      if (!this.config.binanceApiKey) this.config.binanceApiKey = process.env.BINANCE_API_KEY || '';
-      if (!this.config.binanceApiSecret) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET || '';
+      // Refuerzo final: Asegurar que si la DB no tiene nada, usamos Render
+      this.config.geminiApiKey = this.config.geminiApiKey || process.env.GEMINI_API_KEY || '';
+      this.config.binanceApiKey = this.config.binanceApiKey || process.env.BINANCE_API_KEY || '';
+      this.config.binanceApiSecret = this.config.binanceApiSecret || process.env.BINANCE_API_SECRET || '';
+      this.config.telegramBotToken = this.config.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || '';
+      this.config.telegramChatId = this.config.telegramChatId || process.env.TELEGRAM_CHAT_ID || '';
 
       // Asegurar que los servicios de IA reciban la llave cargada
       this.gemmaService.updateApiKey(this.config.geminiApiKey);
