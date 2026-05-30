@@ -283,18 +283,27 @@ export default function App() {
 
   // Update visual configuration form fields when server config loads (only on first load to prevent overwriting active typing)
   useEffect(() => {
-    if (config && isFirstLoadRef.current && isConnected) {
-      setEditApiKey(config.binanceApiKey || '');
-      setEditApiSecret(config.binanceApiSecret || '');
-      setEditGeminiApiKey(config.geminiApiKey || '');
-      setEditTradeSize(config.tradeSizeUSDT);
-      setEditMode(config.mode);
-      setEditMarketType(config.marketType || 'SPOT');
-      setEditDailyProfitTarget(config.dailyProfitTarget || 75);
-      setEditLeverage(config.leverage || 5);
-      setEditTelegramBotToken(config.telegramBotToken || '');
-      setEditTelegramChatId(config.telegramChatId || '');
-      isFirstLoadRef.current = false;
+    if (config && isConnected) {
+      if (isFirstLoadRef.current) {
+        setEditApiKey(config.binanceApiKey || '');
+        setEditApiSecret(config.binanceApiSecret || '');
+        setEditGeminiApiKey(config.geminiApiKey || '');
+        setEditTradeSize(config.tradeSizeUSDT);
+        setEditMode(config.mode);
+        setEditMarketType(config.marketType || 'SPOT');
+        setEditDailyProfitTarget(config.dailyProfitTarget || 75);
+        setEditLeverage(config.leverage || 5);
+        setEditTelegramBotToken(config.telegramBotToken || '');
+        setEditTelegramChatId(config.telegramChatId || '');
+        isFirstLoadRef.current = false;
+      } else {
+        // Auto-poblar si el servidor envía llaves y los campos locales están vacíos
+        setEditApiKey(prev => prev || config.binanceApiKey || '');
+        setEditApiSecret(prev => prev || config.binanceApiSecret || '');
+        setEditGeminiApiKey(prev => prev || config.geminiApiKey || '');
+        setEditTelegramBotToken(prev => prev || config.telegramBotToken || '');
+        setEditTelegramChatId(prev => prev || config.telegramChatId || '');
+      }
     }
   }, [config, isConnected]);
 

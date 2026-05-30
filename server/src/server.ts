@@ -5,9 +5,8 @@ import express, { Request, Response } from 'express';
 import * as http from 'http';
 import * as WebSocket from 'ws';
 import cors from 'cors';
-import mongoose from 'mongoose';
 import * as path from 'path';
-import { TradingEngine } from './bot/tradingEngine';
+import { TradingEngine } from './bot/TradingEngine'; // Corregido: capitalización del nombre del archivo
 import { saveTradeToHistory } from './persistence';
 
 // Auto-restart on unhandled errors: Exiting with code 1 signals Render to restart the container

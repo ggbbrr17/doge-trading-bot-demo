@@ -1,6 +1,6 @@
 import { CustomNeuralNetwork } from './aiModel';
 import { MathGenes } from './evolutionEngine';
-import { OrderBookSignal } from './orderBookSensor';
+import { OrderBookSignal } from '../orderBookSensor';
 
 export interface StrategySignal {
   action: 'BUY' | 'SELL' | 'HOLD';
