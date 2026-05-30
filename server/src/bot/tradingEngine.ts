@@ -635,7 +635,8 @@ export class TradingEngine {
       tradeStats,
       genes,
       signal, // pass Gemma as an extra vote
-      this.currentRegime?.current_regime
+      this.currentRegime?.current_regime,
+      this.cachedOrderBook
     );
 
     // Override local signal variable with the unified signal decision
