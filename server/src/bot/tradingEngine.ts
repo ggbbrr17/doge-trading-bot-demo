@@ -326,16 +326,24 @@ export class TradingEngine {
       if (state) {
         // Combinar configuración guardada, pero asegurar que no sobreescribimos con vacíos si hay env vars
         const savedConfig = state.config || {};
-        this.config = { ...this.config, ...savedConfig };
+
+        // PRIORIDAD: Si el valor en DB es vacío, NO sobrescribir el valor de Render (process.env)
+        Object.keys(savedConfig).forEach(key => {
+          const val = (savedConfig as any)[key];
+          if (val !== "" && val !== null && val !== undefined) {
+            (this.config as any)[key] = val;
+          }
+        });
+
         if (state.stats) this.stats = { ...this.stats, ...state.stats };
-
-        // Fallback: Si después de cargar de DB las llaves están vacías, usar las de Render (env vars)
-        if (!this.config.geminiApiKey) this.config.geminiApiKey = process.env.GEMINI_API_KEY || '';
-        if (!this.config.binanceApiKey) this.config.binanceApiKey = process.env.BINANCE_API_KEY || '';
-        if (!this.config.binanceApiSecret) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET || '';
-
-        this.log('System state successfully loaded from MongoDB.');
       }
+
+      // Refuerzo: Asegurar que si la DB no tenía nada, usamos las de Render
+      this.config.geminiApiKey = this.config.geminiApiKey || process.env.GEMINI_API_KEY || '';
+      this.config.binanceApiKey = this.config.binanceApiKey || process.env.BINANCE_API_KEY || '';
+      this.config.binanceApiSecret = this.config.binanceApiSecret || process.env.BINANCE_API_SECRET || '';
+
+      this.log('System state successfully loaded.');
     } catch (error) {
       this.log('Failed to load state from DB. Using defaults.');
     }
