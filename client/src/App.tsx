@@ -66,7 +66,7 @@ interface EvolutionStats {
 }
 
 interface BotConfig {
-  mode: 'DEMO' | 'TESTNET' | 'REAL';
+  mode: 'TESTNET' | 'REAL';
   isRunning: boolean;
   strategy: 'AI_UNIFIED';
   tradeSizeUSDT: number;
@@ -103,7 +103,7 @@ interface Indicators {
 export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [config, setConfig] = useState<BotConfig>({
-    mode: 'DEMO',
+    mode: 'TESTNET',
     isRunning: false,
     strategy: 'AI_UNIFIED',
     tradeSizeUSDT: 50,
@@ -113,8 +113,8 @@ export default function App() {
     gridLayers: 3,
     marketType: 'SPOT', // Default to SPOT
     leverage: 5, // Default leverage for futures
-    telegramBotToken: '7575795641:AAHdzUClOsiwyqp4mZorLEyvDqeoYIh2LKA',
-    telegramChatId: '7543101442'
+    telegramBotToken: '',
+    telegramChatId: ''
   });
 
   const [stats, setStats] = useState<BotStats>({
@@ -173,7 +173,7 @@ export default function App() {
   const [editApiSecret, setEditApiSecret] = useState('');
   const [editGeminiApiKey, setEditGeminiApiKey] = useState('');
   const [editTradeSize, setEditTradeSize] = useState(50);
-  const [editMode, setEditMode] = useState<'DEMO' | 'TESTNET' | 'REAL'>('DEMO');
+  const [editMode, setEditMode] = useState<'TESTNET' | 'REAL'>('TESTNET');
   const [editMarketType, setEditMarketType] = useState<'SPOT' | 'FUTURES'>('SPOT');
   const [editDailyProfitTarget, setEditDailyProfitTarget] = useState(75);
   const [editLeverage, setEditLeverage] = useState(5);
@@ -940,7 +940,6 @@ export default function App() {
                       onChange={(e) => setEditMode(e.target.value as any)}
                       className="cyber-input cyber-select text-xs font-bold"
                     >
-                      <option value="DEMO">SIMULATED DEMO (NO RISK)</option>
                       <option value="TESTNET">BINANCE TESTNET (PAPER TRADING)</option>
                       <option value="REAL">BINANCE REAL ACCOUNT</option>
                     </select>
@@ -1012,38 +1011,36 @@ export default function App() {
                 </div>
 
                 {/* API Keys Configuration (only shown if not in DEMO mode) */}
-                {editMode !== 'DEMO' && (
-                  <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
-                    <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-pink">
-                      <Key size={14} /> BINANCE CONFIGURATION SECURE SHIELD
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance API Key</label>
-                      <input
-                        type="text"
-                        placeholder="Enter API Key"
-                        value={editApiKey}
-                        onChange={(e) => setEditApiKey(e.target.value)}
-                        className="cyber-input text-xs font-mono"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance Secret Key</label>
-                      <input
-                        type="password"
-                        placeholder="••••••••••••••••••••••••••••••••"
-                        value={editApiSecret}
-                        onChange={(e) => setEditApiSecret(e.target.value)}
-                        className="cyber-input text-xs font-mono"
-                      />
-                    </div>
-                    <p className="text-[10px] text-slate-500 leading-relaxed">
-                      Keys are processed completely in your local computer terminal. Never shared or uploaded externally. Ensure spot or futures trading permissions are active depending on market type.
-                    </p>
+                <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
+                  <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-pink">
+                    <Key size={14} /> BINANCE CONFIGURATION SECURE SHIELD
                   </div>
-                )}
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance API Key</label>
+                    <input
+                      type="text"
+                      placeholder="Enter API Key"
+                      value={editApiKey}
+                      onChange={(e) => setEditApiKey(e.target.value)}
+                      className="cyber-input text-xs font-mono"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance Secret Key</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••••••••••••••••••••••••••"
+                      value={editApiSecret}
+                      onChange={(e) => setEditApiSecret(e.target.value)}
+                      className="cyber-input text-xs font-mono"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    Keys are processed completely in your local computer terminal. Never shared or uploaded externally. Ensure spot or futures trading permissions are active depending on market type.
+                  </p>
+                </div>
 
                 {/* Telegram Notifications Configuration */}
                 <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
