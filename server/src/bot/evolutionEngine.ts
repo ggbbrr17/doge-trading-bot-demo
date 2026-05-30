@@ -177,7 +177,7 @@ export class EvolutionEngine {
       const options = {
         hostname: 'generativelanguage.googleapis.com',
         port: 443,
-        path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
+        path: `/v1beta/models/gemma-4-26b-a4b-it:generateContent?key=${this.geminiApiKey}`,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -217,7 +217,7 @@ export class EvolutionEngine {
 
     // 1. Try Gemini API Optimization first
     try {
-      this.log(`Reaching out to Google Gemini (gemini-1.5-flash) for optimization...`);
+      this.log(`Reaching out to AI Core (Gemma 4) for optimization...`);
       const closedTrades = tradeResults.filter((t: any) => t.status === 'CLOSED');
       const winningTrades = closedTrades.filter((t: any) => (t.pnl || 0) > 0);
       const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 50;

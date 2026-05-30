@@ -198,12 +198,7 @@ export class TradingEngine {
       // Fetch 100 recent 1-minute klines from public Binance (or use fallback generator if network fails)
       let rawKlines: any[] = [];
       try {
-        const client = new BinanceClient({
-          apiKey: '',
-          apiSecret: '',
-          isTestnet: this.config.mode === 'TESTNET',
-          marketType: this.config.marketType
-        });
+        const client = new BinanceClient({ apiKey: '', apiSecret: '', isTestnet: false, marketType: 'SPOT' });
         rawKlines = await client.getKlines('DOGEUSDT', '1m', 80);
       } catch (e) {
         this.log('Using simulated offline market stream generator.');
@@ -451,12 +446,7 @@ export class TradingEngine {
       // 1. Fetch current price
       let currentPrice = 0;
       try {
-        const client = new BinanceClient({
-          apiKey: '',
-          apiSecret: '',
-          isTestnet: this.config.mode === 'TESTNET',
-          marketType: this.config.marketType
-        });
+        const client = new BinanceClient({ apiKey: '', apiSecret: '', isTestnet: false, marketType: 'SPOT' });
         currentPrice = await client.getTickerPrice('DOGEUSDT');
       } catch (e: any) {
         this.log(`Binance public feed unavailable: ${e.message}. Using synthetic fallback.`);
@@ -830,7 +820,10 @@ export class TradingEngine {
 
     if (this.binanceClient) {
       try {
-        const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity);
+        const isFutures = this.config.marketType === 'FUTURES';
+        // En Hedge Mode, necesitamos especificar positionSide: LONG o SHORT
+        const positionSide = isFutures ? (side === 'BUY' ? 'LONG' : 'SHORT') : undefined;
+        const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity, undefined, isFutures, positionSide);
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)
           : (order.fills && order.fills.length > 0
@@ -880,7 +873,9 @@ export class TradingEngine {
         const exitSide = trade.side === 'BUY' ? 'SELL' : 'BUY';
         // En FUTURES usamos reduceOnly: true para asegurar que solo cerramos el volumen actual
         const isFutures = this.config.marketType === 'FUTURES';
-        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity, undefined, isFutures);
+        // En Hedge Mode, positionSide debe coincidir con el lado de la posición original
+        const positionSide = isFutures ? (trade.side === 'BUY' ? 'LONG' : 'SHORT') : undefined;
+        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity, undefined, isFutures, positionSide);
 
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)
