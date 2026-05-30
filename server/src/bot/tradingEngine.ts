@@ -3,10 +3,8 @@ import { BinanceClient } from '../utils/binanceClient';
 import { CustomNeuralNetwork } from './aiModel';
 import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicators } from './strategies';
 import { EvolutionEngine } from './evolutionEngine';
-import { GemmaService, GemmaSignal } from './gemmaService'; // Mantener en ./gemmaService
-import { hmmService, HMMResult } from './hmmService'; // Mantener en ./hmmService
-import { OrderBookSensor, OrderBookSignal } from '../orderBookSensor'; // Importar desde server/src
-import { SentimentService, SentimentSignal } from '../sentimentService'; // Importar desde server/src
+import { GemmaService, GemmaSignal } from './gemmaService';
+import { hmmService, HMMResult } from './hmmService';
 import { TradeModel } from '../persistence';
 
 // Esquema para guardar la configuración y stats del bot
@@ -90,16 +88,6 @@ export class TradingEngine {
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
 
-  private orderBookSensor: OrderBookSensor;
-  private cachedOrderBook: OrderBookSignal | null = null;
-  private lastOrderBookFetchTime = 0;
-  private isOrderBookFetching = false;
-
-  private sentimentService: SentimentService;
-  private cachedSentiment: SentimentSignal | null = null;
-  private lastSentimentFetchTime = 0;
-  private isSentimentFetching = false;
-
   private currentRegime: HMMResult | null = null;
   private lastHmmFetchTime = 0;
   private isHmmFetching = false;
@@ -115,8 +103,6 @@ export class TradingEngine {
     this.strategyManager = new StrategyManager(this.neuralNet);
     this.evolutionEngine = new EvolutionEngine();
     this.gemmaService = new GemmaService();
-    this.orderBookSensor = new OrderBookSensor();
-    this.sentimentService = new SentimentService();
 
     // Initial Defaults
     this.config = {
@@ -159,8 +145,6 @@ export class TradingEngine {
     if (this.config.geminiApiKey) {
       this.gemmaService.updateApiKey(this.config.geminiApiKey);
       this.evolutionEngine.updateApiKey(this.config.geminiApiKey);
-      // Asegurar que sentimentService también reciba la API key
-      this.sentimentService.updateApiKey(this.config.geminiApiKey);
     } else {
       this.log('⚠️ No Gemini API Key found in persistent state.');
     }
@@ -214,7 +198,12 @@ export class TradingEngine {
       // Fetch 100 recent 1-minute klines from public Binance (or use fallback generator if network fails)
       let rawKlines: any[] = [];
       try {
-        const client = new BinanceClient({ apiKey: '', apiSecret: '', isTestnet: false, marketType: 'SPOT' });
+        const client = new BinanceClient({
+          apiKey: '',
+          apiSecret: '',
+          isTestnet: this.config.mode === 'TESTNET',
+          marketType: this.config.marketType
+        });
         rawKlines = await client.getKlines('DOGEUSDT', '1m', 80);
       } catch (e) {
         this.log('Using simulated offline market stream generator.');
@@ -426,8 +415,6 @@ export class TradingEngine {
     if (newConfig.geminiApiKey !== undefined) {
       this.gemmaService.updateApiKey(newConfig.geminiApiKey);
       this.evolutionEngine.updateApiKey(newConfig.geminiApiKey);
-      // Asegurar que sentimentService también reciba la API key
-      this.sentimentService.updateApiKey(newConfig.geminiApiKey);
     }
 
     this.saveState();
@@ -464,7 +451,12 @@ export class TradingEngine {
       // 1. Fetch current price
       let currentPrice = 0;
       try {
-        const client = new BinanceClient({ apiKey: '', apiSecret: '', isTestnet: false, marketType: 'SPOT' });
+        const client = new BinanceClient({
+          apiKey: '',
+          apiSecret: '',
+          isTestnet: this.config.mode === 'TESTNET',
+          marketType: this.config.marketType
+        });
         currentPrice = await client.getTickerPrice('DOGEUSDT');
       } catch (e: any) {
         this.log(`Binance public feed unavailable: ${e.message}. Using synthetic fallback.`);
@@ -601,42 +593,6 @@ export class TradingEngine {
     }
   }
 
-  private triggerBackgroundOrderBookFetch() {
-    const POLL_INTERVAL_MS = 5000; // 5 seconds
-    const now = Date.now();
-
-    if (!this.isOrderBookFetching && now - this.lastOrderBookFetchTime > POLL_INTERVAL_MS) {
-      this.isOrderBookFetching = true;
-      this.orderBookSensor.fetchOrderBookSnapshot('DOGEUSDT').then((signal) => {
-        this.cachedOrderBook = signal;
-        this.lastOrderBookFetchTime = Date.now();
-        this.isOrderBookFetching = false;
-        this.triggerUpdate();
-      }).catch(() => {
-        this.isOrderBookFetching = false;
-      });
-    }
-  }
-
-  private triggerBackgroundSentimentFetch() {
-    const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
-    const now = Date.now();
-
-    if (!this.isSentimentFetching && now - this.lastSentimentFetchTime > CACHE_TTL_MS) {
-      this.isSentimentFetching = true;
-      this.log('🛡️ [Sentiment Shield] Analyzing social sentiment circuit breakers...');
-      this.sentimentService.fetchSentiment().then((signal) => {
-        this.cachedSentiment = signal;
-        this.lastSentimentFetchTime = Date.now();
-        this.isSentimentFetching = false;
-        this.log(`🛡️ [Sentiment Shield] Score: ${signal.score} | ${signal.summary}`);
-        this.triggerUpdate();
-      }).catch(() => {
-        this.isSentimentFetching = false;
-      });
-    }
-  }
-
   private async evaluateStrategy(indicators: TechnicalIndicators) {
     // Always trigger background Gemma 4 updates to ensure fresh qualitative/sentiment data is available
 
@@ -689,20 +645,11 @@ export class TradingEngine {
       tradeStats,
       genes,
       signal, // pass Gemma as an extra vote
-      this.currentRegime?.current_regime,
-      this.cachedOrderBook // Pasar la señal del Order Book
+      this.currentRegime?.current_regime
     );
 
     // Override local signal variable with the unified signal decision
     signal = unifiedSignal;
-
-    // Lógica de Veto por Sentimiento (Feature 2)
-    if (signal.action === 'BUY' && this.cachedSentiment) {
-      if (this.cachedSentiment.isCriticalNegative || this.cachedSentiment.score < -0.6) {
-        this.log(`🛡️ SENTIMENT VETO: Dampening BUY signal confidence by 50% due to negative social sentiment (${this.cachedSentiment.score}).`);
-        signal.confidence *= 0.5;
-      }
-    }
 
     // Process Signal Action
     if (signal.action === 'BUY' && !hasActiveTrade) {
@@ -881,7 +828,7 @@ export class TradingEngine {
 
     this.log(`Initiating position entry vector... ${side} ${quantity.toFixed(1)} DOGE @ $${price.toFixed(5)} (~$${amount} USDT)`);
 
-    if (this.binanceClient && (this.config.mode === 'TESTNET' || this.config.mode === 'REAL')) {
+    if (this.binanceClient) {
       try {
         const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity);
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
@@ -1099,8 +1046,6 @@ export class TradingEngine {
         bollinger: indicators.bollinger,
         currentPrice,
       },
-      orderBook: this.cachedOrderBook, // Incluir datos del Order Book
-      sentiment: this.cachedSentiment, // Incluir datos de Sentimiento
       hmmRegime: this.currentRegime,
       neuralNetwork: this.neuralNet.getWeightsAndNeurons(),
       evolution: this.evolutionEngine.getStats(),
@@ -1185,12 +1130,61 @@ export class TradingEngine {
   private async sendPeriodicSummary() {
     const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
     const now = Date.now();
-    if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS || !this.config.telegramBotToken || !this.config.telegramChatId) return;
+
+    if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS) {
+      return; // Not time yet
+    }
+
+    if (!this.config.telegramBotToken || !this.config.telegramChatId) {
+      return; // Telegram not configured
+    }
 
     this.lastSummaryTime = now;
-    this.log('📊 Generando reporte periódico para Telegram...');
-    const report = await this.generateStatusReport();
-    await this.sendTelegramMessage(`🕒 *Reporte Automático (3h)*\n\n${report}`);
-    this.log('✅ Reporte de 3 horas enviado exitosamente.');
+    this.log('📊 Generando reporte periódico de 3 horas para Telegram...');
+
+    // 1. Open Trades
+    const openTrades = this.trades.filter(t => t.status === 'OPEN');
+    let openSummary = '';
+    if (openTrades.length === 0) {
+      openSummary = 'Ninguna operación abierta.';
+    } else {
+      openSummary = openTrades.map(t => {
+        const pnlStr = (t.pnlPercent || 0) >= 0 ? `+${(t.pnlPercent || 0).toFixed(2)}%` : `${(t.pnlPercent || 0).toFixed(2)}%`;
+        const emoji = (t.pnlPercent || 0) >= 0 ? '🟢' : '🔴';
+        return `• ${t.side} $${t.amount.toFixed(2)} | PnL: ${emoji} ${pnlStr}`;
+      }).join('\n');
+    }
+
+    // 2. Closed Trades in the last 3 hours
+    const threeHoursAgo = now - SUMMARY_INTERVAL_MS;
+    const recentClosed = this.trades.filter(t => t.status === 'CLOSED' && (t.exitTimestamp || 0) > threeHoursAgo);
+    let closedSummary = '';
+    let recentNetProfit = 0;
+    if (recentClosed.length === 0) {
+      closedSummary = 'Ninguna operación cerrada en las últimas 3 horas.';
+    } else {
+      recentNetProfit = recentClosed.reduce((sum, t) => sum + (t.pnl || 0), 0);
+      const winCount = recentClosed.filter(t => (t.pnl || 0) > 0).length;
+      const lossCount = recentClosed.length - winCount;
+      const emoji = recentNetProfit >= 0 ? '🤑' : '📉';
+      closedSummary = `Se cerraron ${recentClosed.length} operaciones (${winCount}W / ${lossCount}L).\n` +
+        `PnL del periodo: ${emoji} $${recentNetProfit.toFixed(2)}`;
+    }
+
+    // 3. Market Summary from Gemma
+    const marketNews = await this.gemmaService.generateMarketSummary();
+
+    // 4. HMM Regime
+    const regimeStr = this.currentRegime ? this.currentRegime.current_regime : 'Desconocido';
+
+    // Construct the final message
+    const message = `*DOGE Bot | Reporte de 3 Horas* 🕒\n\n` +
+      `*1️⃣ Operaciones Abiertas (${openTrades.length})*\n${openSummary}\n\n` +
+      `*2️⃣ Actividad Reciente*\n${closedSummary}\n\n` +
+      `*3️⃣ Régimen de Mercado (HMM)*\n🧠 Detectado: \`${regimeStr}\`\n\n` +
+      `*4️⃣ Visión del Mercado & Noticias*\n${marketNews}`;
+
+    await this.sendTelegramMessage(message);
+    this.log('✅ Reporte de 3 horas enviado a Telegram exitosamente.');
   }
 }
