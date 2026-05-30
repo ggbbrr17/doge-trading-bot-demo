@@ -55,7 +55,7 @@ export interface BotStats {
 }
 
 export interface BotConfig {
-  mode: 'DEMO' | 'TESTNET' | 'REAL';
+  mode: 'TESTNET' | 'REAL';
   isRunning: boolean;
   strategy: 'AI_UNIFIED';
   tradeSizeUSDT: number;
@@ -106,7 +106,7 @@ export class TradingEngine {
 
     // Initial Defaults
     this.config = {
-      mode: 'DEMO',
+      mode: 'TESTNET',
       isRunning: false,
       strategy: 'AI_UNIFIED',
       tradeSizeUSDT: Number(process.env.TRADE_SIZE_USDT) || 50,
@@ -250,18 +250,9 @@ export class TradingEngine {
         marketType: this.config.marketType,
       });
       this.log(`Binance Client authenticated in ${this.config.mode} mode (${this.config.marketType}).`);
-
-      if (this.config.marketType === 'FUTURES') {
-        this.binanceClient.setLeverage('DOGEUSDT', this.config.leverage)
-          .then(() => this.log(`Binance leverage successfully configured to ${this.config.leverage}x.`))
-          .catch((err) => this.log(`Warning: Failed to set Binance leverage to ${this.config.leverage}x: ${err.message}`));
-      }
     } else {
       this.binanceClient = null;
-      if (this.config.mode !== 'DEMO') {
-        this.log(`WARNING: Binance keys are missing. Switching environment to DEMO.`);
-        this.config.mode = 'DEMO';
-      }
+      this.log(`WARNING: Binance keys are missing. Engine will not be able to execute trades in ${this.config.mode} mode.`);
     }
   }
 
@@ -421,11 +412,6 @@ export class TradingEngine {
     if (newConfig.geminiApiKey !== undefined) {
       this.gemmaService.updateApiKey(newConfig.geminiApiKey);
       this.evolutionEngine.updateApiKey(newConfig.geminiApiKey);
-    }
-
-    // Recalculate demo balance stats if changed back to demo
-    if (newConfig.mode === 'DEMO') {
-      this.log('Re-syncing Simulated Demo Portfolio to standard $10,000 USDT base.');
     }
 
     this.saveState();
@@ -834,7 +820,7 @@ export class TradingEngine {
 
     this.log(`Initiating position entry vector... ${side} ${quantity.toFixed(1)} DOGE @ $${price.toFixed(5)} (~$${amount} USDT)`);
 
-    if (this.config.mode !== 'DEMO' && this.binanceClient) {
+    if (this.binanceClient) {
       try {
         const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity);
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
@@ -874,51 +860,14 @@ export class TradingEngine {
         this.log(`ERROR: Binance failed to execute order: ${e.message}`);
       }
     } else {
-      // SIMULATED PAPER TRADING ENTRY
-      const marginUsed = this.config.marketType === 'FUTURES'
-        ? amount / this.config.leverage
-        : amount;
-
-      if (this.stats.totalBalanceUSDT < marginUsed) {
-        this.log(`Execution halted: Insufficient simulated USDT liquidity! Needed margin: $${marginUsed.toFixed(2)}`);
-        return;
-      }
-
-      const trade: Trade = {
-        id: 'SIM_' + Math.random().toString(36).substr(2, 9).toUpperCase(),
-        symbol,
-        side,
-        type: 'SIMULATED',
-        price,
-        quantity,
-        amount,
-        timestamp: Date.now(),
-        status: 'OPEN',
-        reason,
-        targetSL,
-        targetTP,
-        highestPrice: price,
-        lowestPrice: price,
-      };
-
-      // Subtract USDT, Add DOGE to virtual stats
-      this.stats.totalBalanceUSDT -= marginUsed;
-      this.stats.dogeBalance += quantity;
-
-      this.trades.push(trade);
-      this.log(`Simulated ${this.config.marketType} Trade executed. Entry vector stored: [${trade.id}]${this.config.marketType === 'FUTURES' ? ` with ${this.config.leverage}x leverage (Margin: $${marginUsed.toFixed(2)})` : ''}`);
-      this.saveState();
+      this.log(`Execution halted: Binance client not initialized (check API keys in Render environment).`);
     }
   }
 
   private async executeExit(trade: Trade, price: number, reason: string) {
     this.log(`Closing position vector ${trade.id} @ $${price.toFixed(5)}... Reason: ${reason}`);
 
-    // Si la operación fue originalmente real o de testnet, intentamos cerrarla en Binance 
-    // incluso si el modo actual del bot es DEMO, para evitar acumulación de posiciones en el exchange.
-    const isRealTrade = trade.type === 'TESTNET' || trade.type === 'REAL';
-
-    if (isRealTrade && this.binanceClient) {
+    if (this.binanceClient) {
       try {
         const exitSide = trade.side === 'BUY' ? 'SELL' : 'BUY';
         // En FUTURES usamos reduceOnly: true para asegurar que solo cerramos el volumen actual
@@ -964,42 +913,8 @@ export class TradingEngine {
       } catch (e: any) {
         this.log(`ERROR: Binance failed to close position: ${e.message}`);
       }
-    } else if (trade.type === 'SIMULATED' || (isRealTrade && !this.binanceClient)) {
-      // SIMULATED PAPER TRADING EXIT
-      let finalExitPrice = price;
-
-      trade.status = 'CLOSED';
-      trade.exitPrice = finalExitPrice;
-      trade.exitTimestamp = Date.now();
-
-      const pnl = (finalExitPrice - trade.price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
-      trade.pnl = parseFloat(pnl.toFixed(4));
-      trade.pnlPercent = parseFloat((((finalExitPrice - trade.price) / trade.price) * 100 * (trade.side === 'BUY' ? 1 : -1)).toFixed(2));
-
-      // Crediting virtual balances
-      const marginUsed = this.config.marketType === 'FUTURES'
-        ? trade.amount / this.config.leverage
-        : trade.amount;
-      const creditedUSDT = marginUsed + pnl;
-      this.stats.totalBalanceUSDT += creditedUSDT;
-      this.stats.dogeBalance -= trade.quantity;
-
-      this.log(`Simulated Trade closed. ID: ${trade.id}. PnL: $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)`);
-
-      // Train Neural Network using trade feedback!
-      // Send Telegram notification for exit
-      // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
-      //   `*Trade ID:* ${trade.id}\n` +
-      //   `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
-      //   `*Exit Price:* $${finalExitPrice.toFixed(5)}\n` +
-      //   `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
-      //   `*Reason:* ${reason}`;
-      // this.sendTelegramMessage(telegramMsg);
-
-      this.trainModelOnExit(trade);
-
-      this.updateStats();
-      this.saveState();
+    } else {
+      this.log(`Exit halted: Binance client not initialized.`);
     }
   }
 
