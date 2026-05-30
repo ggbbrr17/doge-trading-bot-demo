@@ -50,7 +50,7 @@ export class SentimentService {
             const options = {
                 hostname: 'generativelanguage.googleapis.com',
                 port: 443,
-                path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
+                path: `/v1beta/models/gemma-4-26b-a4b-it:generateContent?key=${this.geminiApiKey}`,
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

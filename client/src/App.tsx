@@ -76,7 +76,6 @@ interface BotConfig {
   gridLayers: number;
   marketType: 'SPOT' | 'FUTURES';
   leverage: number; // Only for FUTURES
-  dailyProfitTarget?: number;
   telegramBotToken?: string;
   telegramChatId?: string;
 }
@@ -185,7 +184,6 @@ export default function App() {
   const [editTradeSize, setEditTradeSize] = useState(50);
   const [editMode, setEditMode] = useState<'TESTNET' | 'REAL'>('TESTNET');
   const [editMarketType, setEditMarketType] = useState<'SPOT' | 'FUTURES'>('SPOT');
-  const [editDailyProfitTarget, setEditDailyProfitTarget] = useState(75);
   const [editLeverage, setEditLeverage] = useState(5);
   const [editTelegramBotToken, setEditTelegramBotToken] = useState('');
   const [editTelegramChatId, setEditTelegramChatId] = useState('');
@@ -291,7 +289,6 @@ export default function App() {
         setEditTradeSize(config.tradeSizeUSDT);
         setEditMode(config.mode);
         setEditMarketType(config.marketType || 'SPOT');
-        setEditDailyProfitTarget(config.dailyProfitTarget || 75);
         setEditLeverage(config.leverage || 5);
         setEditTelegramBotToken(config.telegramBotToken || '');
         setEditTelegramChatId(config.telegramChatId || '');
@@ -344,7 +341,6 @@ export default function App() {
           binanceApiKey: editApiKey,
           binanceApiSecret: editApiSecret,
           marketType: editMarketType,
-          dailyProfitTarget: Number(editDailyProfitTarget),
           leverage: Number(editLeverage),
           telegramBotToken: editTelegramBotToken,
           telegramChatId: editTelegramChatId

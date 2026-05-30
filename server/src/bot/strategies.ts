@@ -920,73 +920,98 @@ export class StrategyManager {
     return { action: 'HOLD', confidence: 0.5, reason: `OB Flow: Neutral imbalance (${obi}).` };
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // UNIFIED SUPER STRATEGY — Democratic Weighted Voting across all 4 models
-  // Each strategy votes BUY or SELL with its confidence. HOLD = abstain.
-  // Final decision = highest weighted vote score above minimum quorum.
-  // ───────────────────────────────────────────────────────────────────────────
+
+  getUnifiedSignal(
+    indicators: TechnicalIndicators,
+    priceHistory: number[] = [],
+    hasActiveTrade: boolean = false,
+    averageEntryPrice: number = 0,
+    tradeStats: { winRate: number; avgWin: number; avgLoss: number } = { winRate: 0.5, avgWin: 0.01, avgLoss: 0.008 },
+    genes?: MathGenes,
+    gemmaSignal?: StrategySignal | null,
+    hmmRegime?: string,
+    obiSignal?: OrderBookSignal | null
+  ): StrategySignal {
+    const oracle = this.getTemporalOracleSignal(indicators, [], priceHistory, genes);
+    const statArb = this.getGridDcaSignal(indicators, hasActiveTrade, averageEntryPrice, priceHistory, genes);
+    const kalmanHurst = this.getAiNeuralNetSignal(indicators, priceHistory, genes);
+    const kelly = this.getConservativeSignal(indicators, priceHistory, tradeStats, genes);
+    const quant = this.getInstitutionalQuantSignal(indicators);
+    const botHerd = this.getBotHerdSignal(indicators);
+    const omega = this.getOmegaInversionSignal(indicators, priceHistory);
+    const spectral = this.getFourierCycleSignal(indicators);
+    const obFlow = this.getOrderBookFlowSignal(obiSignal ?? null);
+
+    // REFINAMIENTO POR DESEMPEÑO: Multiplicador dinámico basado en Win Rate (0.75x a 1.25x)
+    // Esto premia la confianza cuando el bot es exitoso y la reduce cuando hay pérdidas.
+    const multiplier = 0.75 + (tradeStats.winRate * 0.5);
+
+    // Ajuste de pesos por Régimen de Mercado (HMM)
+    let oracleWeight = 1.0, statArbWeight = 1.0, kalmanWeight = 1.0;
+    if (hmmRegime === 'TREND_BULL' || hmmRegime === 'TREND_BEAR') {
+      oracleWeight = 1.5; kalmanWeight = 1.5; statArbWeight = 0.5;
+    } else if (hmmRegime === 'RANGE') {
+      oracleWeight = 0.5; kalmanWeight = 0.5; statArbWeight = 1.5;
+    }
+
+    const votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega, spectral, obFlow];
+    const weights = [oracleWeight, statArbWeight, kalmanWeight, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+    const names = ['Oracle', 'StatArb', 'Kalman', 'Kelly', 'Quant', 'Herd', 'Omega', 'Spectral', 'OrderFlow'];
+
+    votes.forEach((v, i) => {
+      if (v.action !== 'HOLD') {
+        v.confidence *= (weights[i] * multiplier);
+        v.confidence = Math.min(0.99, v.confidence);
+      }
+    });
+
+    if (gemmaSignal) {
       votes.push(gemmaSignal);
       names.push('Gemma 4 Crecetrader');
-}
+    }
 
-// Weighted vote tally
-let buyScore = 0;
-let sellScore = 0;
-const buyVoters: string[] = [];
-const sellVoters: string[] = [];
-const holdVoters: string[] = [];
+    let buyScore = 0, sellScore = 0;
+    const buyVoters: string[] = [], sellVoters: string[] = [];
 
-votes.forEach((v, i) => {
-  if (v.action === 'BUY') {
-    buyScore += v.confidence;
-    buyVoters.push(`${names[i]}(${(v.confidence * 100).toFixed(0)}%)`);
-  } else if (v.action === 'SELL') {
-    sellScore += v.confidence;
-    sellVoters.push(`${names[i]}(${(v.confidence * 100).toFixed(0)}%)`);
-  } else {
-    holdVoters.push(names[i]);
-  }
-});
+    votes.forEach((v, i) => {
+      if (v.action === 'BUY') {
+        buyScore += v.confidence;
+        buyVoters.push(names[i]);
+      } else if (v.action === 'SELL') {
+        sellScore += v.confidence;
+        sellVoters.push(names[i]);
+      }
+    });
 
-// ───────────────────────────────────────────────────────────────────────────
-// SYSTEMIC TIMEFRAME FILTER: Alineación de Marea
-// ───────────────────────────────────────────────────────────────────────────
-// Si la temporalidad superior es bajista, reducimos drásticamente la confianza de compras
-if (indicators.htfAlignment === 'BEARISH' && buyScore > 0) {
-  buyScore *= 0.4; // Penalización por ir contra la marea
-}
-if (indicators.htfAlignment === 'BULLISH' && sellScore > 0) {
-  sellScore *= 0.4; // Penalización por ir contra la marea
-}
+    // Filtro sistémico: Alineación con la Marea (HTF)
+    if (indicators.htfAlignment === 'BEARISH' && buyScore > 0) buyScore *= 0.4;
+    if (indicators.htfAlignment === 'BULLISH' && sellScore > 0) sellScore *= 0.4;
 
-// Minimum quorum: at least 1 strategy must vote + net score must exceed threshold
-// Increased to 0.90 to ensure extremely high probability of profit per user request
-const MIN_QUORUM_SCORE = 0.90;
+    const MIN_QUORUM = 1.15;
+    const regimePrefix = hmmRegime ? `[${hmmRegime}] ` : '';
 
-const regimePrefix = hmmRegime ? `[Regime: ${hmmRegime}] ` : '';
+    if (buyScore > sellScore && buyScore >= MIN_QUORUM) {
+      const avgConfidence = buyScore / Math.max(1, buyVoters.length);
+      return {
+        action: 'BUY',
+        confidence: Math.min(0.98, avgConfidence),
+        reason: `${regimePrefix}🗳️ UNIFIED BUY [${buyVoters.join(', ')}] | Win Multiplier: ${multiplier.toFixed(2)}x | Score: ${buyScore.toFixed(2)}`,
+      };
+    }
 
-if (buyScore > sellScore && buyScore >= MIN_QUORUM_SCORE) {
-  const avgConfidence = buyScore / Math.max(1, buyVoters.length);
-  return {
-    action: 'BUY',
-    confidence: Math.min(0.98, avgConfidence),
-    reason: `${regimePrefix}🗳️ UNIFIED VOTE BUY [${buyVoters.join(', ')}] | SELL:[${sellVoters.join(', ') || 'none'}] | Score: ${buyScore.toFixed(2)} vs ${sellScore.toFixed(2)}`,
-  };
-}
+    if (sellScore > buyScore && sellScore >= MIN_QUORUM) {
+      const avgConfidence = sellScore / Math.max(1, sellVoters.length);
+      return {
+        action: 'SELL',
+        confidence: Math.min(0.98, avgConfidence),
+        reason: `${regimePrefix}🗳️ UNIFIED SELL [${sellVoters.join(', ')}] | Win Multiplier: ${multiplier.toFixed(2)}x | Score: ${sellScore.toFixed(2)}`,
+      };
+    }
 
-if (sellScore > buyScore && sellScore >= MIN_QUORUM_SCORE) {
-  const avgConfidence = sellScore / Math.max(1, sellVoters.length);
-  return {
-    action: 'SELL',
-    confidence: Math.min(0.98, avgConfidence),
-    reason: `${regimePrefix}🗳️ UNIFIED VOTE SELL [${sellVoters.join(', ')}] | BUY:[${buyVoters.join(', ') || 'none'}] | Score: ${sellScore.toFixed(2)} vs ${buyScore.toFixed(2)}`,
-  };
-}
-
-return {
-  action: 'HOLD',
-  confidence: 0.5,
-  reason: `${regimePrefix}🗳️ UNIFIED VOTE: No quorum. BUY(${buyScore.toFixed(2)}) vs SELL(${sellScore.toFixed(2)}). Abstaining: [${holdVoters.join(', ')}]`,
-};
+    return {
+      action: 'HOLD',
+      confidence: 0.5,
+      reason: `${regimePrefix}🗳️ UNIFIED VOTE: Consenso insuficiente. BUY(${buyScore.toFixed(2)}) vs SELL(${sellScore.toFixed(2)}).`,
+    };
   }
 }
