@@ -20,7 +20,7 @@ export interface Trade {
   id: string;
   symbol: string;
   side: 'BUY' | 'SELL';
-  type: 'TESTNET' | 'REAL';
+  type: 'TESTNET' | 'REAL' | 'DEMO';
   price: number;
   quantity: number;
   amount: number;
@@ -55,7 +55,7 @@ export interface BotStats {
 }
 
 export interface BotConfig {
-  mode: 'TESTNET' | 'REAL';
+  mode: 'TESTNET' | 'REAL' | 'DEMO';
   isRunning: boolean;
   strategy: 'AI_UNIFIED';
   tradeSizeUSDT: number;
