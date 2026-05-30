@@ -1163,7 +1163,7 @@ export class TradingEngine {
     const openTrades = this.trades.filter(t => t.status === 'OPEN');
     const closedTrades = this.trades.filter(t => t.status === 'CLOSED');
     const netProfit = this.stats.netProfitUSDT;
-
+    
     // ROI Basado en el balance inicial de 10,000 (standard en el bot)
     const roi = (netProfit / 10000) * 100;
     const runningEmoji = this.config.isRunning ? '🚀 *EJECUTANDO*' : '💤 *PAUSADO*';
@@ -1195,7 +1195,7 @@ export class TradingEngine {
     const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
     const now = Date.now();
     if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS || !this.config.telegramBotToken || !this.config.telegramChatId) {
-      return;
+      return; 
     }
 
     this.lastSummaryTime = now;
