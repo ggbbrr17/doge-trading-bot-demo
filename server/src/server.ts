@@ -7,7 +7,8 @@ import * as WebSocket from 'ws';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import * as path from 'path';
-import { TradingEngine } from './bot//persistence';
+import { TradingEngine } from './bot/tradingEngine';
+import { saveTradeToHistory } from './persistence';
 
 // Auto-restart on unhandled errors: Exiting with code 1 signals Render to restart the container
 process.on('uncaughtException', (error) => {
