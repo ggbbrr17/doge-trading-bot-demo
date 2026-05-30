@@ -256,10 +256,7 @@ export class TradingEngine {
       }
     } else {
       this.binanceClient = null;
-      if (this.config.mode !== 'DEMO') {
-        this.log(`WARNING: Binance keys are missing. Switching environment to DEMO.`);
-        this.config.mode = 'DEMO';
-      }
+      this.log(`WARNING: Binance keys are missing. Verification required for ${this.config.mode} mode.`);
     }
   }
 
@@ -1088,6 +1085,36 @@ export class TradingEngine {
   public async sendSummaryNow() {
     this.lastSummaryTime = 0; // Reset so sendPeriodicSummary fires right away
     await this.sendPeriodicSummary();
+  }
+
+  /** Genera un reporte detallado de la situación actual del bot para Telegram */
+  private async generateStatusReport(): Promise<string> {
+    const openTrades = this.trades.filter(t => t.status === 'OPEN');
+    const closedTrades = this.trades.filter(t => t.status === 'CLOSED');
+    const netProfit = this.stats.netProfitUSDT;
+
+    // ROI Basado en el balance inicial de 10,000 (valor inicial de las stats)
+    const roi = (netProfit / 10000) * 100;
+    const runningEmoji = this.config.isRunning ? '🚀 *EJECUTANDO*' : '💤 *PAUSADO*';
+    const marketNews = await this.gemmaService.generateMarketSummary();
+
+    let openSummary = '';
+    if (openTrades.length === 0) {
+      openSummary = '_Sin posiciones activas._';
+    } else {
+      openSummary = openTrades.map(t => {
+        const pnlStr = (t.pnlPercent || 0) >= 0 ? `+${(t.pnlPercent || 0).toFixed(2)}%` : `${(t.pnlPercent || 0).toFixed(2)}%`;
+        const emoji = (t.pnlPercent || 0) >= 0 ? '🟢' : '🔴';
+        return `• ${t.side} | $${t.amount.toFixed(2)} | ${emoji} ${pnlStr}`;
+      }).join('\n');
+    }
+
+    return `📊 *REPORTE DE ESTADO* \n` +
+      `Motor: ${runningEmoji}\n` +
+      `ROI Total: *${roi >= 0 ? '📈' : '📉'} ${roi.toFixed(2)}%*\n\n` +
+      `*📦 Operaciones Abiertas:* \n${openSummary}\n\n` +
+      `*✅ Operaciones Cerradas:* ${closedTrades.length} (Win Rate: ${this.stats.winRatePercent}%)\n\n` +
+      `*🤖 Visión de la IA (Gemma 4):*\n${marketNews}`;
   }
 
   private async sendPeriodicSummary() {

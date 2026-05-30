@@ -7,7 +7,7 @@ import * as WebSocket from 'ws';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import * as path from 'path';
-import { TradingEngine } from './bot/TradingEngine';
+import { TradingEngine } from './bot/tradingEngine';
 import { saveTradeToHistory } from './persistence';
 
 // Auto-restart on unhandled errors: Exiting with code 1 signals Render to restart the container
@@ -181,7 +181,7 @@ mongoose.connect(MONGODB_URI, {
       }
     });
   })
-  .catch((err: any) => {
+  .catch((err: Error) => {
     console.error('❌ MongoDB Connection Error:', err);
     process.exit(1);
   });
