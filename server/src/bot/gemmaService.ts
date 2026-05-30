@@ -297,10 +297,10 @@ Your mission is to perform a detailed **Self-Correction & Retrospective Analysis
 - EMA short/long Ratio: ${(indicators.ema.ema20 / (indicators.ema.ema50 || 1.0)).toFixed(4)}
 - Bollinger Band position: ${((indicators.currentPrice - indicators.bollinger.lower) / (indicators.bollinger.upper - indicators.bollinger.lower || 0.0001)).toFixed(2)}
 
-Perform a deep logical analysis in Spanish. Point out:
-1. **El Diagnóstico**: ¿Por qué crees que esta operación falló o tuvo éxito? (e.g. ¿Se compró demasiado tarde tras un rally impulsivo?, ¿el stop loss estaba demasiado ajustado?, ¿se respetó la estructura del Order Block o hubo un sweep de liquidez inesperado por fundamentales/BTC?).
-2. **La Lección Concreta**: Basándote en este resultado y el comportamiento de las velas/indicadores, prescribe una regla cuantitativa o heurística concisa y clara para mejorar las próximas entradas o la colocación de SL/TP.
-3. **Guardado en Memoria**: Escribe esta regla en forma de instrucción directa para ti mismo (e.g., "Cuando el precio esté por encima de la banda superior de Bollinger y el RSI > 65, evitar abrir compras sin un retroceso de al menos un FVG de 15m...").
+Perform a deep logical and mathematical analysis in Spanish. Point out:
+1. **El Diagnóstico de la Estrategia Unificada**: ¿Qué sub-estrategias votaron a favor de esta entrada? (Detallado en la razón del trade: "${trade.reason}"). ¿Fueron correctas esas sub-estrategias o cayeron en una trampa de mercado/falso rompimiento? Describe qué funcionó y qué falló de los componentes del voto unificado.
+2. **Inferencia y Creación de Fórmulas Matemáticas**: Siéntete libre de aplicar o sugerir cualquier fórmula matemática nueva, o inferir relaciones dinámicas avanzadas entre indicadores para refinar la siguiente entrada (ej: proponer índices combinados como "Índice de Estructura: IE = RSI * ER / FDI", o "SL_dinámico = ATR * 1.5 * FDI").
+3. **Guardado en Memoria (Instrucción Matemática)**: Redacta una regla formal e instrucción matemática directa para ti mismo bajo el título "### 📐 FÓRMULA/REGLA MATEMÁTICA PROPUESTA:" (ej: "Fórmula: Si H < 0.42 y Z < -2.3, y la tendencia HTF no es bajista, entonces la entrada tiene alta probabilidad; de lo contrario, inhibir...").
 
 Format the output as a beautiful, concise, and structured report in Spanish with emojis. Do not output JSON, return it as clean formatted text.
 `;

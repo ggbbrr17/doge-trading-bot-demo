@@ -100,6 +100,13 @@ interface Indicators {
   currentPrice: number;
 }
 
+interface OrderBookFlow {
+  obi: number;
+  microPressure: number;
+  wallSide: 'BUY' | 'SELL' | 'NONE';
+  wallPrice: number;
+}
+
 export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [config, setConfig] = useState<BotConfig>({
@@ -139,6 +146,8 @@ export default function App() {
     bollinger: { upper: 0.43, middle: 0.42, lower: 0.41, width: 0.05 },
     currentPrice: 0.42
   });
+  const [orderBook, setOrderBook] = useState<OrderBookFlow | null>(null);
+  const [sentiment, setSentiment] = useState<{ score: number; summary: string; isCriticalNegative: boolean } | null>(null);
 
   const [neuralNet, setNeuralNet] = useState<NeuralNetwork>({
     inputToHidden: [],
@@ -234,6 +243,8 @@ export default function App() {
           }
           setCandles(data.candles);
           setIndicators(data.indicators);
+          setOrderBook(data.orderBook);
+          setSentiment(data.sentiment);
 
           if (data.neuralNetwork) {
             setNeuralNet(data.neuralNetwork);
@@ -843,6 +854,41 @@ export default function App() {
                   <span className="badge badge-violet mb-1">🧠 AI</span>
                 </div>
                 <p className="text-[10px] text-slate-600 mt-1">{stats.winningTrades}W / {stats.losingTrades}L</p>
+              </div>
+            </div>
+
+            {/* Order Book Flow Sensor */}
+            <div className={`cyber-card relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200 ${orderBook && orderBook.obi > 0.2 ? 'cyan-glow-border' : orderBook && orderBook.obi < -0.2 ? 'pink-glow-border' : ''}`}>
+              <div className="card-accent-top bg-cyan-500" />
+              <div className="flex justify-between items-start">
+                <span className="stat-label">Order Flow</span>
+                <Layers size={13} className={orderBook && orderBook.obi > 0 ? 'text-neon-cyan' : 'text-neon-pink'} />
+              </div>
+              <div className="mt-2">
+                <div className="flex items-end gap-2">
+                  <div className={`stat-value font-mono ${orderBook && orderBook.obi > 0 ? 'text-neon-cyan' : 'text-neon-pink'}`}>
+                    {orderBook ? (orderBook.obi * 100).toFixed(1) : '0.0'}%
+                  </div>
+                  <span className="text-[9px] text-slate-500 mb-1">OBI</span>
+                </div>
+                <p className="text-[9px] text-slate-600 mt-1 font-mono uppercase">
+                  Wall: {orderBook ? `${orderBook.wallSide} @ $${orderBook.wallPrice.toFixed(4)}` : 'Scanning...'}
+                </p>
+              </div>
+            </div>
+
+            {/* Sentiment Shield */}
+            <div className={`cyber-card relative flex flex-col justify-between min-h-[108px] hover:translate-y-[-2px] transition-transform duration-200 ${sentiment && sentiment.score > 0.4 ? 'cyan-glow-border' : sentiment && sentiment.score < -0.4 ? 'pink-glow-border' : ''}`}>
+              <div className={`card-accent-top ${sentiment && sentiment.isCriticalNegative ? 'bg-red-500 animate-pulse' : 'bg-violet-500'}`} />
+              <div className="flex justify-between items-start">
+                <span className="stat-label">Sentiment</span>
+                <Shield size={13} className={sentiment && sentiment.score > 0 ? 'text-neon-green' : 'text-neon-red'} />
+              </div>
+              <div className="mt-2">
+                <div className={`stat-value ${sentiment && sentiment.score >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  {sentiment ? sentiment.score.toFixed(2) : '0.00'}
+                </div>
+                <p className="text-[9px] text-slate-600 mt-1 truncate" title={sentiment?.summary || ''}>{sentiment ? sentiment.summary : 'Analyzing data...'}</p>
               </div>
             </div>
 

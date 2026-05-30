@@ -5,7 +5,9 @@ import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicato
 import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
 import { hmmService, HMMResult } from './hmmService';
-import { TradeModel, TradingLessonModel } from '../persistence';
+import { OrderBookSensor, OrderBookSignal } from './orderBookSensor';
+import { SentimentService, SentimentSignal } from './sentimentService';
+import { TradeModel } from '../persistence';
 
 // Esquema para guardar la configuración y stats del bot
 const BotStateSchema = new mongoose.Schema({
@@ -75,7 +77,6 @@ export class TradingEngine {
   private stats: BotStats;
   private trades: Trade[] = [];
   private logQueue: string[] = [];
-  private lessons: any[] = [];
 
   private pricesBuffer: number[] = [];
   private candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[] = [];
@@ -88,6 +89,16 @@ export class TradingEngine {
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
+
+  private orderBookSensor: OrderBookSensor;
+  private cachedOrderBook: OrderBookSignal | null = null;
+  private lastOrderBookFetchTime = 0;
+  private isOrderBookFetching = false;
+
+  private sentimentService: SentimentService;
+  private cachedSentiment: SentimentSignal | null = null;
+  private lastSentimentFetchTime = 0;
+  private isSentimentFetching = false;
 
   private currentRegime: HMMResult | null = null;
   private lastHmmFetchTime = 0;
@@ -104,6 +115,8 @@ export class TradingEngine {
     this.strategyManager = new StrategyManager(this.neuralNet);
     this.evolutionEngine = new EvolutionEngine();
     this.gemmaService = new GemmaService();
+    this.orderBookSensor = new OrderBookSensor();
+    this.sentimentService = new SentimentService();
 
     // Initial Defaults
     this.config = {
@@ -140,13 +153,13 @@ export class TradingEngine {
   public async initialize() {
     await this.loadState();
     await this.loadActiveTradesFromDb();
-    await this.loadLessonsFromDb();
     this.log('Engine initialized with MongoDB state.');
 
     // Propagate loaded API key to AI services on startup
     if (this.config.geminiApiKey) {
       this.gemmaService.updateApiKey(this.config.geminiApiKey);
       this.evolutionEngine.updateApiKey(this.config.geminiApiKey);
+      this.sentimentService.updateApiKey(this.config.geminiApiKey);
     } else {
       this.log('⚠️ No Gemini API Key found in persistent state.');
     }
@@ -164,20 +177,10 @@ export class TradingEngine {
   private async loadActiveTradesFromDb() {
     try {
       const activeTrades = await TradeModel.find({ status: 'OPEN' });
-      this.trades = activeTrades.map(t => t.toObject() as any);
+      this.trades = activeTrades.map((t: any) => t.toObject() as any);
       this.log(`Loaded ${this.trades.length} active trades from MongoDB.`);
     } catch (e) {
       this.log('Failed to load active trades from DB.');
-    }
-  }
-
-  private async loadLessonsFromDb() {
-    try {
-      const dbLessons = await TradingLessonModel.find().sort({ createdAt: -1 }).limit(10).lean();
-      this.lessons = dbLessons;
-      this.log(`Loaded ${this.lessons.length} AI self-reflection lessons from MongoDB.`);
-    } catch (e) {
-      this.log('Failed to load AI lessons from DB.');
     }
   }
 
@@ -268,7 +271,7 @@ export class TradingEngine {
       }
     } else {
       this.binanceClient = null;
-      this.log(`WARNING: Binance API keys are missing. Real/Testnet trading will fail. Please configure them in your Render environment variables.`);
+      this.log(`WARNING: Binance keys are missing. Verification required for ${this.config.mode} mode.`);
     }
   }
 
@@ -347,10 +350,10 @@ export class TradingEngine {
         if (state.stats) this.stats = { ...this.stats, ...state.stats };
       }
 
-      // Enforce environment variables from Render as the absolute source of truth if defined
-      if (process.env.GEMINI_API_KEY) this.config.geminiApiKey = process.env.GEMINI_API_KEY;
-      if (process.env.BINANCE_API_KEY) this.config.binanceApiKey = process.env.BINANCE_API_KEY;
-      if (process.env.BINANCE_API_SECRET) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET;
+      // Refuerzo: Asegurar que si la DB no tenía nada, usamos las de Render
+      this.config.geminiApiKey = this.config.geminiApiKey || process.env.GEMINI_API_KEY || '';
+      this.config.binanceApiKey = this.config.binanceApiKey || process.env.BINANCE_API_KEY || '';
+      this.config.binanceApiSecret = this.config.binanceApiSecret || process.env.BINANCE_API_SECRET || '';
 
       this.log('System state successfully loaded.');
     } catch (error) {
@@ -416,18 +419,13 @@ export class TradingEngine {
     if (wasRunning) this.stopBot();
 
     this.config = { ...this.config, ...newConfig };
-
-    // Enforce environment variables from Render as the absolute source of truth if defined
-    if (process.env.GEMINI_API_KEY) this.config.geminiApiKey = process.env.GEMINI_API_KEY;
-    if (process.env.BINANCE_API_KEY) this.config.binanceApiKey = process.env.BINANCE_API_KEY;
-    if (process.env.BINANCE_API_SECRET) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET;
-
     this.initializeBinance();
     this.initializeTelegram(); // Re-initialize Telegram on config update
 
-    if (this.config.geminiApiKey) {
-      this.gemmaService.updateApiKey(this.config.geminiApiKey);
-      this.evolutionEngine.updateApiKey(this.config.geminiApiKey);
+    if (newConfig.geminiApiKey !== undefined) {
+      this.gemmaService.updateApiKey(newConfig.geminiApiKey);
+      this.evolutionEngine.updateApiKey(newConfig.geminiApiKey);
+      this.sentimentService.updateApiKey(this.config.geminiApiKey);
     }
 
     this.saveState();
@@ -478,6 +476,9 @@ export class TradingEngine {
 
       // 3. Compute indicators
       const indicators = calculateIndicators(this.pricesBuffer, this.candles);
+
+      this.triggerBackgroundOrderBookFetch();
+      this.triggerBackgroundSentimentFetch();
 
       // 4. Update current open trades valuation / PnL & Check trailing Stops / Target Exits
       this.manageOpenPositions(currentPrice);
@@ -601,6 +602,42 @@ export class TradingEngine {
     }
   }
 
+  private triggerBackgroundOrderBookFetch() {
+    const POLL_INTERVAL_MS = 5000; // 5 seconds
+    const now = Date.now();
+
+    if (!this.isOrderBookFetching && now - this.lastOrderBookFetchTime > POLL_INTERVAL_MS) {
+      this.isOrderBookFetching = true;
+      this.orderBookSensor.fetchOrderBookSnapshot('DOGEUSDT').then((signal) => {
+        this.cachedOrderBook = signal;
+        this.lastOrderBookFetchTime = Date.now();
+        this.isOrderBookFetching = false;
+        this.triggerUpdate();
+      }).catch(() => {
+        this.isOrderBookFetching = false;
+      });
+    }
+  }
+
+  private triggerBackgroundSentimentFetch() {
+    const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+    const now = Date.now();
+
+    if (!this.isSentimentFetching && now - this.lastSentimentFetchTime > CACHE_TTL_MS) {
+      this.isSentimentFetching = true;
+      this.log('🛡️ [Sentiment Shield] Analyzing social sentiment circuit breakers...');
+      this.sentimentService.fetchSentiment().then((signal) => {
+        this.cachedSentiment = signal;
+        this.lastSentimentFetchTime = Date.now();
+        this.isSentimentFetching = false;
+        this.log(`🛡️ [Sentiment Shield] Score: ${signal.score} | ${signal.summary}`);
+        this.triggerUpdate();
+      }).catch(() => {
+        this.isSentimentFetching = false;
+      });
+    }
+  }
+
   private async evaluateStrategy(indicators: TechnicalIndicators) {
     // Always trigger background Gemma 4 updates to ensure fresh qualitative/sentiment data is available
 
@@ -653,11 +690,20 @@ export class TradingEngine {
       tradeStats,
       genes,
       signal, // pass Gemma as an extra vote
-      this.currentRegime?.current_regime
+      this.currentRegime?.current_regime,
+      this.cachedOrderBook
     );
 
     // Override local signal variable with the unified signal decision
     signal = unifiedSignal;
+
+    // Feature 2: Sentiment Veto Logic
+    if (signal.action === 'BUY' && this.cachedSentiment) {
+      if (this.cachedSentiment.isCriticalNegative || this.cachedSentiment.score < -0.6) {
+        this.log(`🛡️ SENTIMENT VETO: Dampening BUY signal confidence by 50% due to negative social sentiment (${this.cachedSentiment.score}).`);
+        signal.confidence *= 0.5;
+      }
+    }
 
     // Process Signal Action
     if (signal.action === 'BUY' && !hasActiveTrade) {
@@ -737,15 +783,11 @@ export class TradingEngine {
       const bbRange = indicators.bollinger.upper - indicators.bollinger.lower || 0.0001;
       const bbPosition = (indicators.currentPrice - indicators.bollinger.lower) / bbRange;
 
-      // Extract last 5 lessons for self-reflection memory
-      const pastLessons = this.lessons.slice(0, 5).map(l => l.llmAnalysis);
-
       this.gemmaService.getSignal(
         'DOGE/USDT',
         indicators.currentPrice,
         { rsi: indicators.rsi, macdHist: indicators.macd.hist, emaRatio, bbPosition },
-        this.candles.slice(-15),
-        pastLessons
+        this.candles.slice(-15)
       ).then((gemmaSignal) => {
         this.cachedGemmaSignal = gemmaSignal;
         this.lastGemmaFetchTime = Date.now();
@@ -941,9 +983,9 @@ export class TradingEngine {
   // Active reinforcement learning call
   private trainModelOnExit(trade: Trade) {
     if (trade.pnl === undefined) return;
-    const pnlVal = trade.pnl;
 
     // Fetch last candle features
+    const rsi = this.candles[this.candles.length - 1]?.close || 50; // indicator proxy
     const indicators = calculateIndicators(this.pricesBuffer);
 
     const emaRatio = indicators.ema.ema20 / (indicators.ema.ema50 || 1.0);
@@ -961,33 +1003,6 @@ export class TradingEngine {
     // Reinforce the neural network weights!
     this.neuralNet.reinforce(normalizedInputs, trade.side, trade.pnl);
     this.log(`Neural Core weights reinforced. Backpropagation feedback applied successfully.`);
-
-    // Perform qualitative auto-learning reflection with Gemini in the background!
-    this.log(`🧠 [Auto-Learning] Requesting self-reflection retrospective on trade ${trade.id}...`);
-    this.gemmaService.analyzeTradeClose(trade, trade.exitPrice || trade.price, trade.reason || 'Auto-exit', indicators)
-      .then(async (analysis) => {
-        const lesson = {
-          tradeId: trade.id,
-          side: trade.side,
-          pnl: pnlVal,
-          pnlPercent: trade.pnlPercent || 0,
-          outcome: pnlVal > 0 ? 'WIN' : 'LOSS',
-          reasonForClose: trade.reason || 'Auto-exit',
-          llmAnalysis: analysis,
-          createdAt: new Date()
-        };
-
-        // Save to DB
-        const savedLesson = await TradingLessonModel.create(lesson);
-        this.lessons.unshift(savedLesson.toObject());
-        if (this.lessons.length > 10) this.lessons.pop();
-
-        this.log(`🧠 [Auto-Learning] Self-reflection complete and saved to Experiential Memory.`);
-        this.triggerUpdate();
-      })
-      .catch((err) => {
-        this.log(`🧠 [Auto-Learning] Retrospective failed: ${err.message}`);
-      });
 
     // If trade resulted in a loss, trigger Genetic Algorithm mathematical evolution!
     if (trade.pnl <= 0) {
@@ -1077,7 +1092,6 @@ export class TradingEngine {
       stats: this.stats,
       trades: this.trades,
       logs: this.getLogs(),
-      lessons: this.lessons,
       candles: this.candles.slice(-80), // keep only what's needed for standard graph
       indicators: {
         rsi: indicators.rsi,
@@ -1086,6 +1100,8 @@ export class TradingEngine {
         bollinger: indicators.bollinger,
         currentPrice,
       },
+      orderBook: this.cachedOrderBook,
+      sentiment: this.cachedSentiment,
       hmmRegime: this.currentRegime,
       neuralNetwork: this.neuralNet.getWeightsAndNeurons(),
       evolution: this.evolutionEngine.getStats(),
@@ -1180,9 +1196,51 @@ export class TradingEngine {
     }
 
     this.lastSummaryTime = now;
-    this.log('📊 Generando reporte periódico para Telegram...');
-    const report = await this.generateStatusReport();
-    await this.sendTelegramMessage(`🕒 *Reporte Automático (3h)*\n\n${report}`);
-    this.log('✅ Reporte de 3 horas enviado exitosamente.');
+    this.log('📊 Generando reporte periódico de 3 horas para Telegram...');
+
+    // 1. Open Trades
+    const openTrades = this.trades.filter(t => t.status === 'OPEN');
+    let openSummary = '';
+    if (openTrades.length === 0) {
+      openSummary = 'Ninguna operación abierta.';
+    } else {
+      openSummary = openTrades.map(t => {
+        const pnlStr = (t.pnlPercent || 0) >= 0 ? `+${(t.pnlPercent || 0).toFixed(2)}%` : `${(t.pnlPercent || 0).toFixed(2)}%`;
+        const emoji = (t.pnlPercent || 0) >= 0 ? '🟢' : '🔴';
+        return `• ${t.side} $${t.amount.toFixed(2)} | PnL: ${emoji} ${pnlStr}`;
+      }).join('\n');
+    }
+
+    // 2. Closed Trades in the last 3 hours
+    const threeHoursAgo = now - SUMMARY_INTERVAL_MS;
+    const recentClosed = this.trades.filter(t => t.status === 'CLOSED' && (t.exitTimestamp || 0) > threeHoursAgo);
+    let closedSummary = '';
+    let recentNetProfit = 0;
+    if (recentClosed.length === 0) {
+      closedSummary = 'Ninguna operación cerrada en las últimas 3 horas.';
+    } else {
+      recentNetProfit = recentClosed.reduce((sum, t) => sum + (t.pnl || 0), 0);
+      const winCount = recentClosed.filter(t => (t.pnl || 0) > 0).length;
+      const lossCount = recentClosed.length - winCount;
+      const emoji = recentNetProfit >= 0 ? '🤑' : '📉';
+      closedSummary = `Se cerraron ${recentClosed.length} operaciones (${winCount}W / ${lossCount}L).\n` +
+        `PnL del periodo: ${emoji} $${recentNetProfit.toFixed(2)}`;
+    }
+
+    // 3. Market Summary from Gemma
+    const marketNews = await this.gemmaService.generateMarketSummary();
+
+    // 4. HMM Regime
+    const regimeStr = this.currentRegime ? this.currentRegime.current_regime : 'Desconocido';
+
+    // Construct the final message
+    const message = `*DOGE Bot | Reporte de 3 Horas* 🕒\n\n` +
+      `*1️⃣ Operaciones Abiertas (${openTrades.length})*\n${openSummary}\n\n` +
+      `*2️⃣ Actividad Reciente*\n${closedSummary}\n\n` +
+      `*3️⃣ Régimen de Mercado (HMM)*\n🧠 Detectado: \`${regimeStr}\`\n\n` +
+      `*4️⃣ Visión del Mercado & Noticias*\n${marketNews}`;
+
+    await this.sendTelegramMessage(message);
+    this.log('✅ Reporte de 3 horas enviado a Telegram exitosamente.');
   }
 }

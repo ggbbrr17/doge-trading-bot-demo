@@ -1,5 +1,6 @@
 import { CustomNeuralNetwork } from './aiModel';
 import { MathGenes } from './evolutionEngine';
+import { OrderBookSignal } from './orderBookSensor';
 
 export interface StrategySignal {
   action: 'BUY' | 'SELL' | 'HOLD';
@@ -891,6 +892,35 @@ export class StrategyManager {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
+  // STRATEGY 9: ORDER BOOK FLOW SENSOR (L2 Depth Analysis)
+  // ───────────────────────────────────────────────────────────────────────────
+  getOrderBookFlowSignal(obiSignal: OrderBookSignal | null): StrategySignal {
+    if (!obiSignal) return { action: 'HOLD', confidence: 0.5, reason: 'OB Sensor: Awaiting snapshot.' };
+
+    const { obi, microPressure, wallSide, wallPrice } = obiSignal;
+
+    // BUY: Imbalance favors bids, weighted pressure is positive, and no sell wall blocking
+    if (obi > 0.25 && microPressure > 0.30 && wallSide !== 'SELL') {
+      return {
+        action: 'BUY',
+        confidence: Math.min(0.95, 0.6 + obi),
+        reason: `OB Flow: Institutional buy pressure detected (OBI: ${obi}, Pressure: ${microPressure}). No resistance walls detected.`,
+      };
+    }
+
+    // SELL: Imbalance favors asks, weighted pressure is negative, or buy wall missing
+    if (obi < -0.25 && microPressure < -0.30 && wallSide !== 'BUY') {
+      return {
+        action: 'SELL',
+        confidence: Math.min(0.95, 0.6 + Math.abs(obi)),
+        reason: `OB Flow: Distribution detected (OBI: ${obi}, Pressure: ${microPressure}). Support walls receding.`,
+      };
+    }
+
+    return { action: 'HOLD', confidence: 0.5, reason: `OB Flow: Neutral imbalance (${obi}).` };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
   // UNIFIED SUPER STRATEGY — Democratic Weighted Voting across all 4 models
   // Each strategy votes BUY or SELL with its confidence. HOLD = abstain.
   // Final decision = highest weighted vote score above minimum quorum.
@@ -903,7 +933,8 @@ export class StrategyManager {
     tradeStats: { winRate: number; avgWin: number; avgLoss: number } = { winRate: 0.5, avgWin: 0.01, avgLoss: 0.008 },
     genes?: MathGenes,
     gemmaSignal?: { action: 'BUY' | 'SELL' | 'HOLD'; confidence: number; reason: string } | null,
-    hmmRegime?: string
+    hmmRegime?: string,
+    obiSignal?: OrderBookSignal | null
   ): StrategySignal {
     // Run all 4 strategies
     const oracle = this.getTemporalOracleSignal(indicators, [], priceHistory, genes);
@@ -914,6 +945,7 @@ export class StrategyManager {
     const botHerd = this.getBotHerdSignal(indicators);
     const omega = this.getOmegaInversionSignal(indicators, priceHistory);
     const spectral = this.getFourierCycleSignal(indicators);
+    const obFlow = this.getOrderBookFlowSignal(obiSignal);
 
     // Modify strategy weighting based on the detected HMM market regime
     // Trend strategies: Oracle, KalmanHurst
@@ -945,8 +977,8 @@ export class StrategyManager {
     kalmanHurst.confidence = Math.min(0.99, kalmanHurst.confidence);
     kelly.confidence = Math.min(0.99, kelly.confidence);
 
-    const votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega, spectral];
-    const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion', 'Fractal Quant', 'Algo Herd Sensor', 'Omega Inversion', 'Fourier Spectral'];
+    const votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega, spectral, obFlow];
+    const names = ['Binomial Oracle', 'Z-Score StatArb', 'Kalman+Hurst', 'Kelly Criterion', 'Fractal Quant', 'Algo Herd Sensor', 'Omega Inversion', 'Fourier Spectral', 'OB Flow Sensor'];
 
     if (gemmaSignal) {
       votes.push(gemmaSignal);
