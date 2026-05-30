@@ -1392,20 +1392,16 @@ export default function App() {
                         <td>{trade.quantity.toFixed(1)}</td>
                         <td>${trade.price.toFixed(5)}</td>
                         <td>${trade.exitPrice?.toFixed(5)}</td>
-                        <td className={profitPercent >= 0 ? 'text-green-900' : 'text-red-900'}>
-                          <div>{trade.pnl?.toFixed(2)} USDT</div>
+                        <td className={profitPercent >= 0 ? 'text-neon-green' : 'text-neon-red'}>
+                          <div className="font-bold">{trade.pnl?.toFixed(2)} USDT</div>
                           <div className="text-[10px]">({profitPercent >= 0 ? '+' : ''}{profitPercent.toFixed(2)}%)</div>
                         </td>
-                        <td>--</td>
-                        <td className="font-mono">
-                          <span className="text-neon-red">-{trade.targetSL || '?'}%</span> / <span className="text-neon-green">+{trade.targetTP || '?'}%</span>
+                        <td className="text-slate-500">--</td>
+                        <td className="text-[10px]">
+                          <div className="text-neon-red">SL: {trade.targetSL}%</div>
+                          <div className="text-neon-green">TP: {trade.targetTP}%</div>
                         </td>
-                        <td className={profitPercent >= 0 ? 'text-neon-green font-bold' : 'text-neon-red font-bold'}>
-                          {profitPercent >= 0 ? '+' : ''}{trade.pnl ? trade.pnl.toFixed(4) : '0.0000'}
-                        </td>
-                        <td className={profitPercent >= 0 ? 'text-neon-green font-bold' : 'text-neon-red font-bold'}>
-                          {profitPercent >= 0 ? '+' : ''}{profitPercent.toFixed(2)}%
-                        </td>
+                        <td>CLOSED</td>
                         <td className="text-slate-400 max-w-[200px] truncate">{trade.reason}</td>
                       </tr>
                     );

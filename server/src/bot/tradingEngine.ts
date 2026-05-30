@@ -6,7 +6,6 @@ import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
 import { hmmService, HMMResult } from './hmmService';
 import { TradeModel } from '../persistence';
-import { OrderBookSignal } from '../orderBookSensor';
 
 // Esquema para guardar la configuración y stats del bot
 const BotStateSchema = new mongoose.Schema({
@@ -85,7 +84,6 @@ export class TradingEngine {
   private evolutionEngine: EvolutionEngine;
   private gemmaService: GemmaService;
   private cachedGemmaSignal: GemmaSignal | null = null;
-  private cachedOrderBook: OrderBookSignal | null = null;
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
@@ -159,8 +157,6 @@ export class TradingEngine {
     this.initializeBinance();
     this.initializeTelegram();
     this.seedCandles();
-    // Sincronización inmediata al arrancar
-    await this.syncRealAccountBalances();
   }
 
   private async loadActiveTradesFromDb() {
@@ -461,22 +457,6 @@ export class TradingEngine {
       this.updateCandles(currentPrice);
       this.pricesBuffer.push(currentPrice);
       if (this.pricesBuffer.length > 1000) this.pricesBuffer.shift(); // Aumentamos el buffer para análisis MTF
-
-      // Update Order Book Snapshot for Strategy 9
-      try {
-        const depth = await this.binanceClient?.getOrderBook('DOGEUSDT', 10);
-        if (depth) {
-          const bidVol = depth.bids.reduce((s: number, b: any) => s + parseFloat(b[1]), 0);
-          const askVol = depth.asks.reduce((s: number, a: any) => s + parseFloat(a[1]), 0);
-          const obi = (bidVol - askVol) / (bidVol + askVol);
-          const spread = depth.bids.length > 0 && depth.asks.length > 0
-            ? ((parseFloat(depth.asks[0][0]) - parseFloat(depth.bids[0][0])) / parseFloat(depth.bids[0][0])) * 100
-            : 0;
-          this.cachedOrderBook = { obi, microPressure: obi * 1.2, wallSide: 'NONE', wallPrice: 0, spread };
-        }
-      } catch (e) {
-        this.cachedOrderBook = null;
-      }
 
       // 3. Compute indicators
       const indicators = calculateIndicators(this.pricesBuffer, this.candles);
@@ -856,25 +836,48 @@ export class TradingEngine {
             ? parseFloat(order.origQty)
             : quantity);
 
-        const trade: Trade = {
-          id: order.orderId.toString(),
-          symbol,
-          side,
-          type: this.config.mode,
-          price: fillPrice,
-          quantity: fillQty,
-          amount: fillPrice * fillQty,
-          timestamp: Date.now(),
-          status: 'OPEN',
-          reason,
-          targetSL,
-          targetTP,
-          highestPrice: fillPrice,
-          lowestPrice: fillPrice,
-        };
+        // Lógica de Acumulación tipo Binance: Buscar posición abierta existente del mismo lado
+        const existingTrade = this.trades.find(t => t.symbol === symbol && t.side === side && t.status === 'OPEN');
 
-        this.trades.push(trade);
-        this.log(`Binance Order filled successfully. ID: ${trade.id}. Price: $${fillPrice.toFixed(5)}`);
+        if (existingTrade) {
+          const oldTotal = existingTrade.price * existingTrade.quantity;
+          const newTotal = fillPrice * fillQty;
+
+          existingTrade.quantity += fillQty;
+          existingTrade.price = (oldTotal + newTotal) / existingTrade.quantity;
+          existingTrade.amount = existingTrade.price * existingTrade.quantity;
+          existingTrade.timestamp = Date.now();
+          existingTrade.reason = `Accumulated: ${existingTrade.reason} | DCA: ${reason}`;
+
+          // Persistir actualización en DB
+          await TradeModel.findOneAndUpdate({ id: existingTrade.id }, {
+            quantity: existingTrade.quantity,
+            price: existingTrade.price,
+            amount: existingTrade.amount,
+            reason: existingTrade.reason
+          });
+          this.log(`🔄 Posición acumulada: ${side} ${symbol}. Nuevo Tamaño: ${existingTrade.quantity.toFixed(1)}, Precio Promedio: $${existingTrade.price.toFixed(5)}`);
+        } else {
+          const trade: Trade = {
+            id: order.orderId.toString(),
+            symbol,
+            side,
+            type: this.config.mode,
+            price: fillPrice,
+            quantity: fillQty,
+            amount: fillPrice * fillQty,
+            timestamp: Date.now(),
+            status: 'OPEN',
+            reason,
+            targetSL,
+            targetTP,
+            highestPrice: fillPrice,
+            lowestPrice: fillPrice,
+          };
+          this.trades.push(trade);
+          await TradeModel.create(trade);
+          this.log(`✅ Nueva posición abierta: ${trade.id}. Precio: $${fillPrice.toFixed(5)}`);
+        }
 
         // Sync real-time balances if needed
         await this.syncRealAccountBalances();
@@ -1013,31 +1016,63 @@ export class TradingEngine {
 
       if (this.config.marketType === 'FUTURES') {
         const assets = accountInfo.assets || [];
-        const positions = accountInfo.positions || [];
+        const positions = accountInfo.positions || []; // Binance Futures Positions array
 
         const usdtAsset = assets.find((a: any) => a.asset === 'USDT');
         const usdtFree = usdtAsset ? parseFloat(usdtAsset.availableBalance) : 0;
-
-        const dogePosition = positions.find((p: any) => p.symbol === 'DOGEUSDT');
-        const dogeAmt = dogePosition ? parseFloat(dogePosition.positionAmt) : 0;
-
         this.stats.totalBalanceUSDT = parseFloat(usdtFree.toFixed(2));
-        this.stats.dogeBalance = parseFloat(dogeAmt.toFixed(2));
 
-        // 🔄 SINCRONIZACIÓN DE POSICIONES: Fuente de verdad = Binance
-        const openTrades = this.trades.filter(t => t.status === 'OPEN');
-        // Si Binance dice que no hay posición (0) pero nosotros tenemos trades "OPEN"
-        if (Math.abs(dogeAmt) < 0.1 && openTrades.length > 0) {
-          this.log(`⚠️ SYNC: No se detectó posición activa en Binance. Limpiando ${openTrades.length} registros fantasma de la UI.`);
-          for (const trade of openTrades) {
-            trade.status = 'CLOSED';
-            trade.exitTimestamp = Date.now();
-            trade.exitPrice = trade.price; // Fallback
-            await TradeModel.findOneAndUpdate({ id: trade.id }, { status: 'CLOSED', exitTimestamp: trade.exitTimestamp });
+        // Sincronización Robusta para DOGEUSDT (Consolidación de filas)
+        const dogePositions = positions.filter((p: any) => p.symbol === 'DOGEUSDT');
+        let totalBotDoge = 0;
+
+        // 1. Si no hay posición en Binance, cerrar todo lo local
+        const openDogeTrades = this.trades.filter(t => t.symbol === 'DOGEUSDT' && t.status === 'OPEN');
+        if (dogePositions.length === 0 && openDogeTrades.length > 0) {
+          for (const t of openDogeTrades) {
+            t.status = 'CLOSED';
+            await TradeModel.findOneAndUpdate({ id: t.id }, { status: 'CLOSED' });
           }
+          this.log(`⚠️ SYNC: Posición vacía en Binance. Limpiando registros locales.`);
         }
 
-        this.log(`Synced Futures balances from Binance: ${this.stats.totalBalanceUSDT} USDT (Available Margin), ${this.stats.dogeBalance} DOGE (Position).`);
+        // 2. Reconciliación por lado (LONG/SHORT)
+        for (const pos of dogePositions) {
+          const amt = Math.abs(parseFloat(pos.positionAmt));
+          const entry = parseFloat(pos.entryPrice);
+          const botSide = parseFloat(pos.positionAmt) > 0 ? 'BUY' : 'SELL';
+          const matchingTrades = this.trades.filter(t => t.symbol === 'DOGEUSDT' && t.side === botSide && t.status === 'OPEN');
+
+          totalBotDoge += parseFloat(pos.positionAmt);
+
+          if (amt < 0.1 && matchingTrades.length > 0) {
+            for (const t of matchingTrades) {
+              t.status = 'CLOSED';
+              await TradeModel.findOneAndUpdate({ id: t.id }, { status: 'CLOSED' });
+            }
+          } else if (amt >= 0.1) {
+            // Si hay múltiples filas para la misma posición, unificar en la primera
+            if (matchingTrades.length !== 1 || Math.abs(matchingTrades[0].quantity - amt) > 0.1) {
+              if (matchingTrades.length === 0) {
+                const syncTrade: any = { id: `SYNC-${botSide}-${Date.now()}`, symbol: 'DOGEUSDT', side: botSide, price: entry, quantity: amt, amount: entry * amt, timestamp: Date.now(), status: 'OPEN', reason: 'EXCHANGE SYNC' };
+                this.trades.push(syncTrade);
+                await TradeModel.create(syncTrade);
+              } else {
+                this.log(`🔄 RECONCILIACIÓN: Fusionando ${matchingTrades.length} filas en una única posición de ${amt} DOGE.`);
+                const main = matchingTrades[0];
+                main.quantity = amt;
+                main.price = entry;
+                main.amount = entry * amt;
+                for (let i = 1; i < matchingTrades.length; i++) {
+                  matchingTrades[i].status = 'CLOSED';
+                  await TradeModel.findOneAndUpdate({ id: matchingTrades[i].id }, { status: 'CLOSED' });
+                }
+                await TradeModel.findOneAndUpdate({ id: main.id }, { quantity: amt, price: entry, amount: main.amount });
+              }
+            }
+          }
+        }
+        this.stats.dogeBalance = totalBotDoge;
       } else {
         const balances = accountInfo.balances || [];
 
@@ -1049,17 +1084,6 @@ export class TradingEngine {
 
         this.stats.totalBalanceUSDT = parseFloat(usdtFree.toFixed(2));
         this.stats.dogeBalance = parseFloat(dogeFree.toFixed(2));
-
-        // Sincronización para SPOT
-        const openTrades = this.trades.filter(t => t.status === 'OPEN');
-        if (dogeFree < 100 && openTrades.length > 0) {
-          for (const trade of openTrades) {
-            trade.status = 'CLOSED';
-            trade.exitTimestamp = Date.now();
-            await TradeModel.findOneAndUpdate({ id: trade.id }, { status: 'CLOSED', exitTimestamp: trade.exitTimestamp });
-          }
-          this.log(`⚠️ SYNC: Balance de DOGE insuficiente en SPOT. Sincronizando registros locales.`);
-        }
 
         this.log(`Synced Spot balances from Binance: ${this.stats.totalBalanceUSDT} USDT, ${this.stats.dogeBalance} DOGE.`);
       }
