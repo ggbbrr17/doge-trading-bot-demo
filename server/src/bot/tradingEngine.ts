@@ -87,7 +87,6 @@ export class TradingEngine {
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
-  private stateFilePath: string;
 
   private currentRegime: HMMResult | null = null;
   private lastHmmFetchTime = 0;
@@ -163,7 +162,7 @@ export class TradingEngine {
   private async loadActiveTradesFromDb() {
     try {
       const activeTrades = await TradeModel.find({ status: 'OPEN' });
-      this.trades = activeTrades.map(t => t.toObject() as any);
+      this.trades = activeTrades.map((t: any) => t.toObject() as any);
       this.log(`Loaded ${this.trades.length} active trades from MongoDB.`);
     } catch (e) {
       this.log('Failed to load active trades from DB.');

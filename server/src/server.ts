@@ -172,7 +172,7 @@ mongoose.connect(MONGODB_URI)
       }
     });
   })
-  .catch(err => {
+  .catch((err: any) => {
     console.error('❌ MongoDB Connection Error:', err);
     process.exit(1);
   });
