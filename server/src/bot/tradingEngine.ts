@@ -5,7 +5,7 @@ import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicato
 import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
 import { hmmService, HMMResult } from './hmmService';
-import { TradeModel } from '../persistence';
+import { TradeModel, TradingLessonModel } from '../persistence';
 
 // Esquema para guardar la configuración y stats del bot
 const BotStateSchema = new mongoose.Schema({
@@ -20,7 +20,7 @@ export interface Trade {
   id: string;
   symbol: string;
   side: 'BUY' | 'SELL';
-  type: 'TESTNET' | 'REAL' | 'DEMO';
+  type: 'TESTNET' | 'REAL';
   price: number;
   quantity: number;
   amount: number;
@@ -55,7 +55,7 @@ export interface BotStats {
 }
 
 export interface BotConfig {
-  mode: 'TESTNET' | 'REAL' | 'DEMO';
+  mode: 'TESTNET' | 'REAL';
   isRunning: boolean;
   strategy: 'AI_UNIFIED';
   tradeSizeUSDT: number;
@@ -75,6 +75,7 @@ export class TradingEngine {
   private stats: BotStats;
   private trades: Trade[] = [];
   private logQueue: string[] = [];
+  private lessons: any[] = [];
 
   private pricesBuffer: number[] = [];
   private candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[] = [];
@@ -139,6 +140,7 @@ export class TradingEngine {
   public async initialize() {
     await this.loadState();
     await this.loadActiveTradesFromDb();
+    await this.loadLessonsFromDb();
     this.log('Engine initialized with MongoDB state.');
 
     // Propagate loaded API key to AI services on startup
@@ -166,6 +168,16 @@ export class TradingEngine {
       this.log(`Loaded ${this.trades.length} active trades from MongoDB.`);
     } catch (e) {
       this.log('Failed to load active trades from DB.');
+    }
+  }
+
+  private async loadLessonsFromDb() {
+    try {
+      const dbLessons = await TradingLessonModel.find().sort({ createdAt: -1 }).limit(10).lean();
+      this.lessons = dbLessons;
+      this.log(`Loaded ${this.lessons.length} AI self-reflection lessons from MongoDB.`);
+    } catch (e) {
+      this.log('Failed to load AI lessons from DB.');
     }
   }
 
@@ -256,10 +268,7 @@ export class TradingEngine {
       }
     } else {
       this.binanceClient = null;
-      if (this.config.mode !== 'DEMO') {
-        this.log(`WARNING: Binance keys are missing. Switching environment to DEMO.`);
-        this.config.mode = 'DEMO';
-      }
+      this.log(`WARNING: Binance API keys are missing. Real/Testnet trading will fail. Please configure them in your Render environment variables.`);
     }
   }
 
@@ -338,10 +347,10 @@ export class TradingEngine {
         if (state.stats) this.stats = { ...this.stats, ...state.stats };
       }
 
-      // Refuerzo: Asegurar que si la DB no tenía nada, usamos las de Render
-      this.config.geminiApiKey = this.config.geminiApiKey || process.env.GEMINI_API_KEY || '';
-      this.config.binanceApiKey = this.config.binanceApiKey || process.env.BINANCE_API_KEY || '';
-      this.config.binanceApiSecret = this.config.binanceApiSecret || process.env.BINANCE_API_SECRET || '';
+      // Enforce environment variables from Render as the absolute source of truth if defined
+      if (process.env.GEMINI_API_KEY) this.config.geminiApiKey = process.env.GEMINI_API_KEY;
+      if (process.env.BINANCE_API_KEY) this.config.binanceApiKey = process.env.BINANCE_API_KEY;
+      if (process.env.BINANCE_API_SECRET) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET;
 
       this.log('System state successfully loaded.');
     } catch (error) {
@@ -407,12 +416,18 @@ export class TradingEngine {
     if (wasRunning) this.stopBot();
 
     this.config = { ...this.config, ...newConfig };
+
+    // Enforce environment variables from Render as the absolute source of truth if defined
+    if (process.env.GEMINI_API_KEY) this.config.geminiApiKey = process.env.GEMINI_API_KEY;
+    if (process.env.BINANCE_API_KEY) this.config.binanceApiKey = process.env.BINANCE_API_KEY;
+    if (process.env.BINANCE_API_SECRET) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET;
+
     this.initializeBinance();
     this.initializeTelegram(); // Re-initialize Telegram on config update
 
-    if (newConfig.geminiApiKey !== undefined) {
-      this.gemmaService.updateApiKey(newConfig.geminiApiKey);
-      this.evolutionEngine.updateApiKey(newConfig.geminiApiKey);
+    if (this.config.geminiApiKey) {
+      this.gemmaService.updateApiKey(this.config.geminiApiKey);
+      this.evolutionEngine.updateApiKey(this.config.geminiApiKey);
     }
 
     this.saveState();
@@ -722,11 +737,15 @@ export class TradingEngine {
       const bbRange = indicators.bollinger.upper - indicators.bollinger.lower || 0.0001;
       const bbPosition = (indicators.currentPrice - indicators.bollinger.lower) / bbRange;
 
+      // Extract last 5 lessons for self-reflection memory
+      const pastLessons = this.lessons.slice(0, 5).map(l => l.llmAnalysis);
+
       this.gemmaService.getSignal(
         'DOGE/USDT',
         indicators.currentPrice,
         { rsi: indicators.rsi, macdHist: indicators.macd.hist, emaRatio, bbPosition },
-        this.candles.slice(-15)
+        this.candles.slice(-15),
+        pastLessons
       ).then((gemmaSignal) => {
         this.cachedGemmaSignal = gemmaSignal;
         this.lastGemmaFetchTime = Date.now();
@@ -922,9 +941,9 @@ export class TradingEngine {
   // Active reinforcement learning call
   private trainModelOnExit(trade: Trade) {
     if (trade.pnl === undefined) return;
+    const pnlVal = trade.pnl;
 
     // Fetch last candle features
-    const rsi = this.candles[this.candles.length - 1]?.close || 50; // indicator proxy
     const indicators = calculateIndicators(this.pricesBuffer);
 
     const emaRatio = indicators.ema.ema20 / (indicators.ema.ema50 || 1.0);
@@ -942,6 +961,33 @@ export class TradingEngine {
     // Reinforce the neural network weights!
     this.neuralNet.reinforce(normalizedInputs, trade.side, trade.pnl);
     this.log(`Neural Core weights reinforced. Backpropagation feedback applied successfully.`);
+
+    // Perform qualitative auto-learning reflection with Gemini in the background!
+    this.log(`🧠 [Auto-Learning] Requesting self-reflection retrospective on trade ${trade.id}...`);
+    this.gemmaService.analyzeTradeClose(trade, trade.exitPrice || trade.price, trade.reason || 'Auto-exit', indicators)
+      .then(async (analysis) => {
+        const lesson = {
+          tradeId: trade.id,
+          side: trade.side,
+          pnl: pnlVal,
+          pnlPercent: trade.pnlPercent || 0,
+          outcome: pnlVal > 0 ? 'WIN' : 'LOSS',
+          reasonForClose: trade.reason || 'Auto-exit',
+          llmAnalysis: analysis,
+          createdAt: new Date()
+        };
+
+        // Save to DB
+        const savedLesson = await TradingLessonModel.create(lesson);
+        this.lessons.unshift(savedLesson.toObject());
+        if (this.lessons.length > 10) this.lessons.pop();
+
+        this.log(`🧠 [Auto-Learning] Self-reflection complete and saved to Experiential Memory.`);
+        this.triggerUpdate();
+      })
+      .catch((err) => {
+        this.log(`🧠 [Auto-Learning] Retrospective failed: ${err.message}`);
+      });
 
     // If trade resulted in a loss, trigger Genetic Algorithm mathematical evolution!
     if (trade.pnl <= 0) {
@@ -1031,6 +1077,7 @@ export class TradingEngine {
       stats: this.stats,
       trades: this.trades,
       logs: this.getLogs(),
+      lessons: this.lessons,
       candles: this.candles.slice(-80), // keep only what's needed for standard graph
       indicators: {
         rsi: indicators.rsi,

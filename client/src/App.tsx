@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Play, Square, Bot, TrendingUp, Cpu, Settings, Shield,
   Terminal, Activity, DollarSign, Percent, Award,
-  Key, Loader2, Sparkles, Send, Bell, Zap, BarChart2, Layers
+  Loader2, Sparkles, Send, Bell, Zap, BarChart2, Layers, Brain
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -131,6 +131,7 @@ export default function App() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [lessons, setLessons] = useState<any[]>([]);
   const [indicators, setIndicators] = useState<Indicators>({
     rsi: 50,
     macd: { macd: 0, signal: 0, hist: 0 },
@@ -228,6 +229,9 @@ export default function App() {
           setStats(data.stats);
           setTrades(data.trades);
           setLogs(data.logs);
+          if (data.lessons) {
+            setLessons(data.lessons);
+          }
           setCandles(data.candles);
           setIndicators(data.indicators);
 
@@ -998,47 +1002,24 @@ export default function App() {
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] text-purple-400 font-bold uppercase flex items-center gap-1">
-                      <Key size={12} /> Gemini API Key
+                      <Sparkles size={12} className="text-purple-400" /> Gemini AI Core
                     </label>
-                    <input
-                      type="password"
-                      placeholder="AI_..."
-                      value={editGeminiApiKey}
-                      onChange={(e) => setEditGeminiApiKey(e.target.value)}
-                      className="cyber-input text-xs font-mono border-purple-500/30 focus:border-purple-500"
-                    />
+                    <div className="cyber-input text-xs font-bold bg-purple-950/20 border-purple-500/30 text-purple-300 flex items-center h-[34px] select-none">
+                      ✅ Integrated (Loaded from Render Env)
+                    </div>
                   </div>
                 </div>
 
-                {/* API Keys Configuration (only shown if not in DEMO mode) */}
+                {/* Secure Environment Shield Badge */}
                 <div className="border border-white/5 bg-slate-950/40 p-4 rounded-xl flex flex-col gap-3">
-                  <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-pink">
-                    <Key size={14} /> BINANCE CONFIGURATION SECURE SHIELD
+                  <div className="flex items-center gap-2 border-b border-white/5 pb-2 text-xs font-bold text-neon-green">
+                    <Shield size={14} /> BINANCE SYSTEM INTEGRATION
                   </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance API Key</label>
-                    <input
-                      type="text"
-                      placeholder="Enter API Key"
-                      value={editApiKey}
-                      onChange={(e) => setEditApiKey(e.target.value)}
-                      className="cyber-input text-xs font-mono"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] text-slate-400 font-semibold uppercase">Binance Secret Key</label>
-                    <input
-                      type="password"
-                      placeholder="••••••••••••••••••••••••••••••••"
-                      value={editApiSecret}
-                      onChange={(e) => setEditApiSecret(e.target.value)}
-                      className="cyber-input text-xs font-mono"
-                    />
+                  <div className="text-xs text-slate-400 leading-relaxed font-semibold">
+                    ✅ Binance API Credentials loaded automatically from Render environment variables.
                   </div>
                   <p className="text-[10px] text-slate-500 leading-relaxed">
-                    Keys are processed completely in your local computer terminal. Never shared or uploaded externally. Ensure spot or futures trading permissions are active depending on market type.
+                    Secure mode active. Standard operations are encrypted. No manual input or local storage is required.
                   </p>
                 </div>
 
@@ -1229,7 +1210,55 @@ export default function App() {
           </div>
         </section>
 
-        {/* ── SECTOR 5: TRANSACTION LEDGER ── */}
+        {/* ── SECTOR 5: AI SELF-REFLECTION & EXPERIENCE MEMORY ── */}
+        <section>
+          <div className="flex items-center gap-3 mb-4">
+            <Brain size={15} className="text-slate-500" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">AI Continuous Self-Learning Memory</span>
+            <div className="flex-1 h-px bg-white/5" />
+          </div>
+          <div className="grid grid-cols-1 gap-5">
+            <div className="cyber-card border border-green-500/20 bg-gradient-to-r from-slate-950/80 via-black/80 to-slate-950/80 shadow-[0_0_20px_rgba(16,185,129,0.05)]">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Cpu className="text-neon-green animate-pulse" size={16} /> 🧠 AI Self-Reflection & Experiential Memory (Reinforcement Loop)
+                </h2>
+                <span className="text-[10px] text-slate-500 font-mono">CONTINUOUS REAL-TIME REFLECTION</span>
+              </div>
+              <div className="flex flex-col gap-4 mt-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                {lessons && lessons.length > 0 ? (
+                  lessons.map((lesson: any, idx: number) => {
+                    const isWin = lesson.outcome === 'WIN';
+                    return (
+                      <div key={idx} className={`p-4 rounded-xl border ${isWin ? 'border-green-500/10 bg-green-500/5' : 'border-red-500/10 bg-red-500/5'} flex flex-col gap-2`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-300">
+                            Trade #{lesson.tradeId} ({lesson.side})
+                          </span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${isWin ? 'bg-green-500/20 text-neon-green' : 'bg-red-500/20 text-neon-red'}`}>
+                            {isWin ? `🏆 SUCCESS: +${lesson.pnlPercent}%` : `❌ FAILURE: ${lesson.pnlPercent}%`}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 font-mono leading-relaxed whitespace-pre-line">
+                          {lesson.llmAnalysis}
+                        </p>
+                        <span className="text-[9px] text-slate-600 font-mono self-end">
+                          Reflected on: {new Date(lesson.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center text-slate-600 italic py-6">
+                    Awaiting trade closes. When a trade completes, the AI will perform retrospective reflection to refine future entry strategies.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── SECTOR 6: TRANSACTION LEDGER ── */}
         <section>
           <div className="flex items-center gap-3 mb-4">
             <Zap size={15} className="text-slate-500" />

@@ -24,6 +24,19 @@ const TradeSchema = new mongoose.Schema({
 
 export const TradeModel = mongoose.model('Trade', TradeSchema);
 
+const TradingLessonSchema = new mongoose.Schema({
+    tradeId: String,
+    side: String,
+    pnl: Number,
+    pnlPercent: Number,
+    outcome: String, // 'WIN' | 'LOSS'
+    reasonForClose: String,
+    llmAnalysis: String,
+    createdAt: { type: Date, default: Date.now }
+});
+
+export const TradingLessonModel = mongoose.model('TradingLesson', TradingLessonSchema);
+
 export const saveTradeToHistory = async (trade: any) => {
     try {
         // Usamos upsert para actualizar si el ID ya existe o crear uno nuevo

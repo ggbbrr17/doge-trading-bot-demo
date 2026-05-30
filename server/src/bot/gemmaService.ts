@@ -38,7 +38,8 @@ export class GemmaService {
     symbol: string,
     currentPrice: number,
     indicators: { rsi: number; macdHist: number; emaRatio: number; bbPosition: number },
-    candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]
+    candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[],
+    pastLessons?: string[]
   ): Promise<GemmaSignal> {
     if (!this.ai) {
       return {
@@ -122,6 +123,15 @@ export class GemmaService {
         return `Candle ${i + 1} (t=${c.time}): O=${c.open.toFixed(5)}, H=${c.high.toFixed(5)}, L=${c.low.toFixed(5)}, C=${c.close.toFixed(5)}, V=${c.volume.toFixed(0)} | Body=${bodySize.toFixed(5)}, UpperWick=${upperWick.toFixed(5)}, LowerWick=${lowerWick.toFixed(5)}, Wick/Body Ratio=${wickRatio.toFixed(2)}`;
       }).join('\n');
 
+      let memoryPrompt = '';
+      if (pastLessons && pastLessons.length > 0) {
+        memoryPrompt = `### 🧠 REINFORCEMENT LEARNING MEMORY (Lessons from past operations):
+You have performed self-reflection on your recent trades. You must review these empirical lessons and integrate them directly into your current strategy to avoid repeating mistakes or to replicate success patterns:
+${pastLessons.map((l, i) => `[Lesson ${i + 1}]:\n${l}`).join('\n\n')}
+
+Integrate these rules into your Decision Matrix now!`;
+      }
+
       const prompt = `
 You are an expert quantitative trading analyst specializing in elite **Smart Money Concepts (SMC)** and **Order Flow** (Institutional Trading) strategies.
 Your goal is to perform a detailed **Market Structure & Order Flow** analysis for the asset ${symbol} and output a trading decision: BUY, SELL, or HOLD.
@@ -163,6 +173,8 @@ ${formattedOBs}
 
 Here is the raw data of the last 15 candles (from oldest to newest):
 ${formattedCandles}
+
+${memoryPrompt}
 
 ### YOUR MISSION:
 1. Analyze the **Market Structure**. Is the price showing CHoCH (Change of Character) or BOS (Break of Structure)? Is the trend structure bullish, bearish, or ranging?
@@ -248,6 +260,60 @@ No uses formato markdown complejo, solo texto simple y negritas. No devuelvas JS
     } catch (error: any) {
       console.error(`[GemmaService] Error fetching market summary: ${error.message}`);
       return 'No se pudo generar el resumen de noticias debido a un error de conexión con la IA.';
+    }
+  }
+
+  async analyzeTradeClose(
+    trade: any,
+    exitPrice: number,
+    reasonForClose: string,
+    indicators: any
+  ): Promise<string> {
+    if (!this.ai) {
+      return 'Falta la API Key de Gemini para el autoaprendizaje.';
+    }
+
+    try {
+      const prompt = `
+You are the AI brain of an elite quantitative trading bot. You just closed a position.
+Your mission is to perform a detailed **Self-Correction & Retrospective Analysis** of this trade so you can self-feed your memory and refine your future entry timing strategy.
+
+### Position Details:
+- Trade ID: ${trade.id}
+- Symbol: ${trade.symbol}
+- Side: ${trade.side} (Entry Type)
+- Entry Price: $${trade.price}
+- Quantity: ${trade.quantity}
+- Total Amount: $${trade.amount} USDT
+- Exit Price: $${exitPrice}
+- Net PnL: $${trade.pnl || 0} USDT
+- PnL Percentage: ${trade.pnlPercent || 0}%
+- Outcome: ${trade.pnl > 0 ? '🏆 SUCCESS (WIN)' : '❌ FAILURE (LOSS)'}
+- Reason for Close: ${reasonForClose}
+
+### Market Context at Invalidation/Exit:
+- RSI: ${indicators.rsi.toFixed(2)}
+- MACD Histogram: ${indicators.macd.hist.toFixed(5)}
+- EMA short/long Ratio: ${(indicators.ema.ema20 / (indicators.ema.ema50 || 1.0)).toFixed(4)}
+- Bollinger Band position: ${((indicators.currentPrice - indicators.bollinger.lower) / (indicators.bollinger.upper - indicators.bollinger.lower || 0.0001)).toFixed(2)}
+
+Perform a deep logical analysis in Spanish. Point out:
+1. **El Diagnóstico**: ¿Por qué crees que esta operación falló o tuvo éxito? (e.g. ¿Se compró demasiado tarde tras un rally impulsivo?, ¿el stop loss estaba demasiado ajustado?, ¿se respetó la estructura del Order Block o hubo un sweep de liquidez inesperado por fundamentales/BTC?).
+2. **La Lección Concreta**: Basándote en este resultado y el comportamiento de las velas/indicadores, prescribe una regla cuantitativa o heurística concisa y clara para mejorar las próximas entradas o la colocación de SL/TP.
+3. **Guardado en Memoria**: Escribe esta regla en forma de instrucción directa para ti mismo (e.g., "Cuando el precio esté por encima de la banda superior de Bollinger y el RSI > 65, evitar abrir compras sin un retroceso de al menos un FVG de 15m...").
+
+Format the output as a beautiful, concise, and structured report in Spanish with emojis. Do not output JSON, return it as clean formatted text.
+`;
+
+      const response = await this.ai.models.generateContent({
+        model: this.modelName,
+        contents: prompt,
+      });
+
+      return response.text || 'No se pudo generar el análisis reflexivo.';
+    } catch (e: any) {
+      console.error(`[GemmaService] Error generating trade analysis: ${e.message}`);
+      return `Error de conexión en el autoaprendizaje: ${e.message}`;
     }
   }
 }
