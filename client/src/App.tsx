@@ -1331,17 +1331,14 @@ export default function App() {
               <table className="cyber-table">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>TYPE</th>
-                    <th>SIDE</th>
-                    <th>ENTRY PRICE</th>
-                    <th>SIZE (DOGE)</th>
-                    <th>TOTAL (USDT)</th>
-                    <th>STATUS</th>
-                    <th>CURRENT/EXIT PRICE</th>
+                    <th>Symbol</th>
+                    <th>Size</th>
+                    <th>Entry Price</th>
+                    <th>Mark Price</th>
+                    <th>PNL (ROE%)</th>
+                    <th>Margin</th>
                     <th>TARGET SL/TP</th>
-                    <th>NET P&L (USDT)</th>
-                    <th>RETURN (%)</th>
+                    <th>Status</th>
                     <th>AI REASONING</th>
                   </tr>
                 </thead>
@@ -1350,27 +1347,29 @@ export default function App() {
                   {openTrades.map((trade) => {
                     const profitPercent = trade.pnlPercent || 0;
                     return (
-                      <tr key={trade.id} className="bg-cyan-500/5 font-mono text-xs">
-                        <td className="font-bold text-neon-cyan">{trade.id}</td>
-                        <td>{trade.type}</td>
-                        <td className="text-neon-green font-bold">{trade.side}</td>
+                      <tr key={trade.id} className="bg-slate-900/40 font-mono text-xs border-l-2 border-neon-cyan">
+                        <td className="font-bold">
+                          <div className="flex flex-col">
+                            <span className="text-white">{trade.symbol}</span>
+                            <span className={trade.side === 'BUY' ? 'text-neon-green' : 'text-neon-red'}>
+                              {trade.side === 'BUY' ? 'LONG' : 'SHORT'} {config.leverage}x
+                            </span>
+                          </div>
+                        </td>
+                        <td className="text-white">{trade.quantity.toFixed(1)}</td>
                         <td>${trade.price.toFixed(5)}</td>
-                        <td>{trade.quantity.toFixed(1)}</td>
-                        <td>${trade.amount.toFixed(2)}</td>
+                        <td className="text-white">${indicators.currentPrice.toFixed(5)}</td>
+                        <td className={profitPercent >= 0 ? 'text-neon-green' : 'text-neon-red'}>
+                          <div className="font-bold">{trade.pnl ? trade.pnl.toFixed(2) : '0.00'} USDT</div>
+                          <div className="text-[10px]">({profitPercent >= 0 ? '+' : ''}{profitPercent.toFixed(2)}%)</div>
+                        </td>
+                        <td>${(trade.amount / config.leverage).toFixed(2)}</td>
+                        <td className="text-[10px]">
+                          <div className="text-neon-red">SL: {trade.targetSL ? `-${trade.targetSL}%` : 'NONE'}</div>
+                          <div className="text-neon-green">TP: {trade.targetTP ? `+${trade.targetTP}%` : 'NONE'}</div>
+                        </td>
                         <td>
-                          <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-neon-cyan border border-cyan-500/30 font-bold animate-pulse text-[9px]">
-                            ACTIVE RUNNING
-                          </span>
-                        </td>
-                        <td className="font-bold">${indicators.currentPrice.toFixed(5)}</td>
-                        <td className="font-mono">
-                          <span className="text-neon-red">-{trade.targetSL || '?'}%</span> / <span className="text-neon-green">+{trade.targetTP || '?'}%</span>
-                        </td>
-                        <td className={profitPercent >= 0 ? 'text-neon-green font-bold' : 'text-neon-red font-bold'}>
-                          {profitPercent >= 0 ? '+' : ''}{trade.pnl ? trade.pnl.toFixed(4) : '0.0000'}
-                        </td>
-                        <td className={profitPercent >= 0 ? 'text-neon-green font-bold' : 'text-neon-red font-bold'}>
-                          {profitPercent >= 0 ? '+' : ''}{profitPercent.toFixed(2)}%
+                          <span className="text-neon-cyan animate-pulse">RUNNING</span>
                         </td>
                         <td className="text-slate-400 max-w-[200px] truncate">{trade.reason}</td>
                       </tr>
@@ -1381,19 +1380,23 @@ export default function App() {
                   {closedTrades.slice().reverse().map((trade) => {
                     const profitPercent = trade.pnlPercent || 0;
                     return (
-                      <tr key={trade.id} className="text-xs text-slate-300 font-mono">
-                        <td>{trade.id}</td>
-                        <td>{trade.type}</td>
-                        <td className={trade.side === 'BUY' ? 'text-neon-green' : 'text-neon-red'}>{trade.side}</td>
-                        <td>${trade.price.toFixed(5)}</td>
-                        <td>{trade.quantity.toFixed(1)}</td>
-                        <td>${trade.amount.toFixed(2)}</td>
+                      <tr key={trade.id} className="text-xs text-slate-500 font-mono opacity-60">
                         <td>
-                          <span className="px-2 py-0.5 rounded bg-white/5 border border-white/5 text-slate-500 text-[9px] uppercase">
-                            COMPLETED
-                          </span>
+                          <div className="flex flex-col">
+                            <span>{trade.symbol}</span>
+                            <span className={trade.side === 'BUY' ? 'text-green-900' : 'text-red-900'}>
+                              {trade.side === 'BUY' ? 'LONG' : 'SHORT'}
+                            </span>
+                          </div>
                         </td>
-                        <td>${trade.exitPrice ? trade.exitPrice.toFixed(5) : '0.0000'}</td>
+                        <td>{trade.quantity.toFixed(1)}</td>
+                        <td>${trade.price.toFixed(5)}</td>
+                        <td>${trade.exitPrice?.toFixed(5)}</td>
+                        <td className={profitPercent >= 0 ? 'text-green-900' : 'text-red-900'}>
+                          <div>{trade.pnl?.toFixed(2)} USDT</div>
+                          <div className="text-[10px]">({profitPercent >= 0 ? '+' : ''}{profitPercent.toFixed(2)}%)</div>
+                        </td>
+                        <td>--</td>
                         <td className="font-mono">
                           <span className="text-neon-red">-{trade.targetSL || '?'}%</span> / <span className="text-neon-green">+{trade.targetTP || '?'}%</span>
                         </td>

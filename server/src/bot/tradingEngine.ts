@@ -6,7 +6,6 @@ import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
 import { hmmService, HMMResult } from './hmmService';
 import { TradeModel } from '../persistence';
-import { OrderBookSignal } from '../orderBookSensor';
 
 // Esquema para guardar la configuración y stats del bot
 const BotStateSchema = new mongoose.Schema({
@@ -85,7 +84,6 @@ export class TradingEngine {
   private evolutionEngine: EvolutionEngine;
   private gemmaService: GemmaService;
   private cachedGemmaSignal: GemmaSignal | null = null;
-  private cachedOrderBook: OrderBookSignal | null = null;
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
@@ -159,6 +157,8 @@ export class TradingEngine {
     this.initializeBinance();
     this.initializeTelegram();
     this.seedCandles();
+    // Sincronización inmediata al arrancar
+    await this.syncRealAccountBalances();
   }
 
   private async loadActiveTradesFromDb() {
@@ -1006,6 +1006,19 @@ export class TradingEngine {
         this.stats.totalBalanceUSDT = parseFloat(usdtFree.toFixed(2));
         this.stats.dogeBalance = parseFloat(dogeAmt.toFixed(2));
 
+        // 🔄 SINCRONIZACIÓN DE POSICIONES: Fuente de verdad = Binance
+        const openTrades = this.trades.filter(t => t.status === 'OPEN');
+        // Si Binance dice que no hay posición (0) pero nosotros tenemos trades "OPEN"
+        if (Math.abs(dogeAmt) < 0.1 && openTrades.length > 0) {
+          this.log(`⚠️ SYNC: No se detectó posición activa en Binance. Limpiando ${openTrades.length} registros fantasma de la UI.`);
+          for (const trade of openTrades) {
+            trade.status = 'CLOSED';
+            trade.exitTimestamp = Date.now();
+            trade.exitPrice = trade.price; // Fallback
+            await TradeModel.findOneAndUpdate({ id: trade.id }, { status: 'CLOSED', exitTimestamp: trade.exitTimestamp });
+          }
+        }
+
         this.log(`Synced Futures balances from Binance: ${this.stats.totalBalanceUSDT} USDT (Available Margin), ${this.stats.dogeBalance} DOGE (Position).`);
       } else {
         const balances = accountInfo.balances || [];
@@ -1018,6 +1031,17 @@ export class TradingEngine {
 
         this.stats.totalBalanceUSDT = parseFloat(usdtFree.toFixed(2));
         this.stats.dogeBalance = parseFloat(dogeFree.toFixed(2));
+
+        // Sincronización para SPOT
+        const openTrades = this.trades.filter(t => t.status === 'OPEN');
+        if (dogeFree < 100 && openTrades.length > 0) {
+          for (const trade of openTrades) {
+            trade.status = 'CLOSED';
+            trade.exitTimestamp = Date.now();
+            await TradeModel.findOneAndUpdate({ id: trade.id }, { status: 'CLOSED', exitTimestamp: trade.exitTimestamp });
+          }
+          this.log(`⚠️ SYNC: Balance de DOGE insuficiente en SPOT. Sincronizando registros locales.`);
+        }
 
         this.log(`Synced Spot balances from Binance: ${this.stats.totalBalanceUSDT} USDT, ${this.stats.dogeBalance} DOGE.`);
       }
