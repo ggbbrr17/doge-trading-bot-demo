@@ -20,7 +20,7 @@ export interface Trade {
   id: string;
   symbol: string;
   side: 'BUY' | 'SELL';
-  type: 'SIMULATED' | 'TESTNET' | 'REAL';
+  type: 'TESTNET' | 'REAL';
   price: number;
   quantity: number;
   amount: number;
@@ -55,7 +55,7 @@ export interface BotStats {
 }
 
 export interface BotConfig {
-  mode: 'DEMO' | 'TESTNET' | 'REAL';
+  mode: 'TESTNET' | 'REAL';
   isRunning: boolean;
   strategy: 'AI_UNIFIED';
   tradeSizeUSDT: number;
@@ -87,7 +87,6 @@ export class TradingEngine {
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
-  private stateFilePath: string;
 
   private currentRegime: HMMResult | null = null;
   private lastHmmFetchTime = 0;
@@ -107,7 +106,7 @@ export class TradingEngine {
 
     // Initial Defaults
     this.config = {
-      mode: 'DEMO',
+      mode: 'TESTNET',
       isRunning: false,
       strategy: 'AI_UNIFIED',
       tradeSizeUSDT: Number(process.env.TRADE_SIZE_USDT) || 50,
@@ -163,7 +162,7 @@ export class TradingEngine {
   private async loadActiveTradesFromDb() {
     try {
       const activeTrades = await TradeModel.find({ status: 'OPEN' });
-      this.trades = activeTrades.map(t => t.toObject() as any);
+      this.trades = activeTrades.map((t: any) => t.toObject() as any);
       this.log(`Loaded ${this.trades.length} active trades from MongoDB.`);
     } catch (e) {
       this.log('Failed to load active trades from DB.');
@@ -257,7 +256,10 @@ export class TradingEngine {
       }
     } else {
       this.binanceClient = null;
-      this.log(`WARNING: Binance keys are missing. Please check your Render environment variables.`);
+      if (this.config.mode !== 'DEMO') {
+        this.log(`WARNING: Binance keys are missing. Switching environment to DEMO.`);
+        this.config.mode = 'DEMO';
+      }
     }
   }
 
@@ -324,14 +326,7 @@ export class TradingEngine {
       if (state) {
         // Combinar configuración guardada, pero asegurar que no sobreescribimos con vacíos si hay env vars
         const savedConfig = state.config || {};
-
-        // Solo sobrescribir si el valor guardado en DB no es un string vacío
-        Object.keys(savedConfig).forEach(key => {
-          const val = (savedConfig as any)[key];
-          if (val !== "" && val !== null && val !== undefined) {
-            (this.config as any)[key] = val;
-          }
-        });
+        this.config = { ...this.config, ...savedConfig };
         if (state.stats) this.stats = { ...this.stats, ...state.stats };
 
         // Fallback: Si después de cargar de DB las llaves están vacías, usar las de Render (env vars)
@@ -818,7 +813,7 @@ export class TradingEngine {
 
     this.log(`Initiating position entry vector... ${side} ${quantity.toFixed(1)} DOGE @ $${price.toFixed(5)} (~$${amount} USDT)`);
 
-    if (this.config.mode !== 'DEMO' && this.binanceClient) {
+    if (this.binanceClient) {
       try {
         const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity);
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
@@ -858,51 +853,14 @@ export class TradingEngine {
         this.log(`ERROR: Binance failed to execute order: ${e.message}`);
       }
     } else {
-      // SIMULATED PAPER TRADING ENTRY
-      const marginUsed = this.config.marketType === 'FUTURES'
-        ? amount / this.config.leverage
-        : amount;
-
-      if (this.stats.totalBalanceUSDT < marginUsed) {
-        this.log(`Execution halted: Insufficient simulated USDT liquidity! Needed margin: $${marginUsed.toFixed(2)}`);
-        return;
-      }
-
-      const trade: Trade = {
-        id: 'SIM_' + Math.random().toString(36).substr(2, 9).toUpperCase(),
-        symbol,
-        side,
-        type: 'SIMULATED',
-        price,
-        quantity,
-        amount,
-        timestamp: Date.now(),
-        status: 'OPEN',
-        reason,
-        targetSL,
-        targetTP,
-        highestPrice: price,
-        lowestPrice: price,
-      };
-
-      // Subtract USDT, Add DOGE to virtual stats
-      this.stats.totalBalanceUSDT -= marginUsed;
-      this.stats.dogeBalance += quantity;
-
-      this.trades.push(trade);
-      this.log(`Simulated ${this.config.marketType} Trade executed. Entry vector stored: [${trade.id}]${this.config.marketType === 'FUTURES' ? ` with ${this.config.leverage}x leverage (Margin: $${marginUsed.toFixed(2)})` : ''}`);
-      this.saveState();
+      this.log(`Execution halted: Binance client not initialized.`);
     }
   }
 
   private async executeExit(trade: Trade, price: number, reason: string) {
     this.log(`Closing position vector ${trade.id} @ $${price.toFixed(5)}... Reason: ${reason}`);
 
-    // Si la operación fue originalmente real o de testnet, intentamos cerrarla en Binance 
-    // incluso si el modo actual del bot es DEMO, para evitar acumulación de posiciones en el exchange.
-    const isRealTrade = trade.type === 'TESTNET' || trade.type === 'REAL';
-
-    if (isRealTrade && this.binanceClient) {
+    if (this.binanceClient) {
       try {
         const exitSide = trade.side === 'BUY' ? 'SELL' : 'BUY';
         // En FUTURES usamos reduceOnly: true para asegurar que solo cerramos el volumen actual
@@ -948,42 +906,8 @@ export class TradingEngine {
       } catch (e: any) {
         this.log(`ERROR: Binance failed to close position: ${e.message}`);
       }
-    } else if (trade.type === 'SIMULATED' || (isRealTrade && !this.binanceClient)) {
-      // SIMULATED PAPER TRADING EXIT
-      let finalExitPrice = price;
-
-      trade.status = 'CLOSED';
-      trade.exitPrice = finalExitPrice;
-      trade.exitTimestamp = Date.now();
-
-      const pnl = (finalExitPrice - trade.price) * trade.quantity * (trade.side === 'BUY' ? 1 : -1);
-      trade.pnl = parseFloat(pnl.toFixed(4));
-      trade.pnlPercent = parseFloat((((finalExitPrice - trade.price) / trade.price) * 100 * (trade.side === 'BUY' ? 1 : -1)).toFixed(2));
-
-      // Crediting virtual balances
-      const marginUsed = this.config.marketType === 'FUTURES'
-        ? trade.amount / this.config.leverage
-        : trade.amount;
-      const creditedUSDT = marginUsed + pnl;
-      this.stats.totalBalanceUSDT += creditedUSDT;
-      this.stats.dogeBalance -= trade.quantity;
-
-      this.log(`Simulated Trade closed. ID: ${trade.id}. PnL: $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)`);
-
-      // Train Neural Network using trade feedback!
-      // Send Telegram notification for exit
-      // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
-      //   `*Trade ID:* ${trade.id}\n` +
-      //   `*Action:* ${trade.side === 'BUY' ? 'SELL' : 'BUY'} (Exit)\n` +
-      //   `*Exit Price:* $${finalExitPrice.toFixed(5)}\n` +
-      //   `*PnL:* $${trade.pnl.toFixed(2)} (${trade.pnlPercent.toFixed(2)}%)\n` +
-      //   `*Reason:* ${reason}`;
-      // this.sendTelegramMessage(telegramMsg);
-
-      this.trainModelOnExit(trade);
-
-      this.updateStats();
-      this.saveState();
+    } else {
+      this.log(`Exit halted: Binance client not initialized.`);
     }
   }
 
@@ -1158,48 +1082,64 @@ export class TradingEngine {
     await this.sendPeriodicSummary();
   }
 
-  /** Genera un reporte detallado de la situación actual del bot */
-  private async generateStatusReport(): Promise<string> {
+  private async sendPeriodicSummary() {
+    const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
+    const now = Date.now();
+
+    if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS) {
+      return; // Not time yet
+    }
+
+    if (!this.config.telegramBotToken || !this.config.telegramChatId) {
+      return; // Telegram not configured
+    }
+
+    this.lastSummaryTime = now;
+    this.log('📊 Generando reporte periódico de 3 horas para Telegram...');
+
+    // 1. Open Trades
     const openTrades = this.trades.filter(t => t.status === 'OPEN');
-    const closedTrades = this.trades.filter(t => t.status === 'CLOSED');
-    const netProfit = this.stats.netProfitUSDT;
-
-    // ROI Basado en el balance inicial de 10,000 (standard en el bot)
-    const roi = (netProfit / 10000) * 100;
-    const runningEmoji = this.config.isRunning ? '🚀 *EJECUTANDO*' : '💤 *PAUSADO*';
-    const marketNews = await this.gemmaService.generateMarketSummary();
-
     let openSummary = '';
     if (openTrades.length === 0) {
-      openSummary = '_Sin posiciones activas._';
+      openSummary = 'Ninguna operación abierta.';
     } else {
       openSummary = openTrades.map(t => {
         const pnlStr = (t.pnlPercent || 0) >= 0 ? `+${(t.pnlPercent || 0).toFixed(2)}%` : `${(t.pnlPercent || 0).toFixed(2)}%`;
         const emoji = (t.pnlPercent || 0) >= 0 ? '🟢' : '🔴';
-        return `• ${t.side} | $${t.amount.toFixed(2)} | ${emoji} ${pnlStr}`;
+        return `• ${t.side} $${t.amount.toFixed(2)} | PnL: ${emoji} ${pnlStr}`;
       }).join('\n');
     }
 
-    return `📊 *REPORTE DE ESTADO* \n` +
-      `Motor: ${runningEmoji}\n` +
-      `Balance: \`$${this.stats.totalBalanceUSDT.toFixed(2)} USDT\`\n` +
-      `ROI Total: *${roi >= 0 ? '📈' : '📉'} ${roi.toFixed(2)}%*\n\n` +
-      `*📦 Operaciones Abiertas:* \n${openSummary}\n\n` +
-      `*✅ Operaciones Cerradas:* ${closedTrades.length}\n` +
-      `Win Rate: ${this.stats.winRatePercent}%\n` +
-      `Beneficio Realizado: $${netProfit.toFixed(2)}\n\n` +
-      `*🤖 Visión de la IA (Gemma 4):*\n${marketNews}`;
-  }
+    // 2. Closed Trades in the last 3 hours
+    const threeHoursAgo = now - SUMMARY_INTERVAL_MS;
+    const recentClosed = this.trades.filter(t => t.status === 'CLOSED' && (t.exitTimestamp || 0) > threeHoursAgo);
+    let closedSummary = '';
+    let recentNetProfit = 0;
+    if (recentClosed.length === 0) {
+      closedSummary = 'Ninguna operación cerrada en las últimas 3 horas.';
+    } else {
+      recentNetProfit = recentClosed.reduce((sum, t) => sum + (t.pnl || 0), 0);
+      const winCount = recentClosed.filter(t => (t.pnl || 0) > 0).length;
+      const lossCount = recentClosed.length - winCount;
+      const emoji = recentNetProfit >= 0 ? '🤑' : '📉';
+      closedSummary = `Se cerraron ${recentClosed.length} operaciones (${winCount}W / ${lossCount}L).\n` +
+        `PnL del periodo: ${emoji} $${recentNetProfit.toFixed(2)}`;
+    }
 
-  private async sendPeriodicSummary() {
-    const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000;
-    const now = Date.now();
-    if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS || !this.config.telegramBotToken) return;
+    // 3. Market Summary from Gemma
+    const marketNews = await this.gemmaService.generateMarketSummary();
 
-    this.lastSummaryTime = now;
-    this.log('📊 Generando reporte periódico para Telegram...');
-    const message = await this.generateStatusReport();
-    await this.sendTelegramMessage(`🕒 *Reporte Automático (3h)*\n\n${message}`);
+    // 4. HMM Regime
+    const regimeStr = this.currentRegime ? this.currentRegime.current_regime : 'Desconocido';
+
+    // Construct the final message
+    const message = `*DOGE Bot | Reporte de 3 Horas* 🕒\n\n` +
+      `*1️⃣ Operaciones Abiertas (${openTrades.length})*\n${openSummary}\n\n` +
+      `*2️⃣ Actividad Reciente*\n${closedSummary}\n\n` +
+      `*3️⃣ Régimen de Mercado (HMM)*\n🧠 Detectado: \`${regimeStr}\`\n\n` +
+      `*4️⃣ Visión del Mercado & Noticias*\n${marketNews}`;
+
+    await this.sendTelegramMessage(message);
     this.log('✅ Reporte de 3 horas enviado a Telegram exitosamente.');
   }
 }
