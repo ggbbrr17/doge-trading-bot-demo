@@ -6,6 +6,7 @@ import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
 import { hmmService, HMMResult } from './hmmService';
 import { TradeModel } from '../persistence';
+import { OrderBookSignal } from '../orderBookSensor';
 
 // Esquema para guardar la configuración y stats del bot
 const BotStateSchema = new mongoose.Schema({
@@ -65,6 +66,7 @@ export interface BotConfig {
   gridLayers: number;
   marketType: 'SPOT' | 'FUTURES';
   leverage: number;
+  dailyProfitTarget?: number; // Meta de ganancia diaria en USDT
   telegramBotToken?: string;
   telegramChatId?: string;
 }
@@ -83,6 +85,7 @@ export class TradingEngine {
   private evolutionEngine: EvolutionEngine;
   private gemmaService: GemmaService;
   private cachedGemmaSignal: GemmaSignal | null = null;
+  private cachedOrderBook: OrderBookSignal | null = null;
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
@@ -430,6 +433,14 @@ export class TradingEngine {
       const maxDailyLoss = this.config.tradeSizeUSDT * 2.5;
       if (this.stats.dailyPnL !== undefined && this.stats.dailyPnL < -maxDailyLoss) {
         this.log(`🚨 CIRCUIT BREAKER: Límite de pérdida diaria alcanzado ($${this.stats.dailyPnL.toFixed(2)}). Deteniendo operaciones por seguridad.`);
+        this.stopBot();
+        return;
+      }
+
+      // Meta de Ganancia Diaria: Asegurar beneficios
+      const dailyTarget = this.config.dailyProfitTarget || (this.config.tradeSizeUSDT * 1.5);
+      if (this.stats.dailyPnL !== undefined && this.stats.dailyPnL >= dailyTarget) {
+        this.log(`💰 TARGET REACHED: Meta de ganancia diaria alcanzada ($${this.stats.dailyPnL.toFixed(2)}). Cerrando sesión por hoy con éxito.`);
         this.stopBot();
         return;
       }
