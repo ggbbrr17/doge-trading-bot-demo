@@ -982,7 +982,7 @@ export class TradingEngine {
 
   // Sync balances with real Binance API
   private async syncRealAccountBalances() {
-    if (!this.binanceClient || this.config.mode === 'DEMO') return;
+    if (!this.binanceClient) return;
 
     try {
       const accountInfo = await this.binanceClient.getAccountInfo();
