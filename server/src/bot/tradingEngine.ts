@@ -162,7 +162,7 @@ export class TradingEngine {
   private async loadActiveTradesFromDb() {
     try {
       const activeTrades = await TradeModel.find({ status: 'OPEN' });
-      this.trades = activeTrades.map((t: any) => t.toObject() as any);
+      this.trades = activeTrades.map((t: any) => ({ ...t.toObject(), id: t.id || t._id.toString() }));
       this.log(`Loaded ${this.trades.length} active trades from MongoDB.`);
     } catch (e) {
       this.log('Failed to load active trades from DB.');
@@ -334,6 +334,10 @@ export class TradingEngine {
       if (!this.config.geminiApiKey) this.config.geminiApiKey = process.env.GEMINI_API_KEY || '';
       if (!this.config.binanceApiKey) this.config.binanceApiKey = process.env.BINANCE_API_KEY || '';
       if (!this.config.binanceApiSecret) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET || '';
+
+      // Asegurar que los servicios de IA reciban la llave cargada
+      this.gemmaService.updateApiKey(this.config.geminiApiKey);
+      this.evolutionEngine.updateApiKey(this.config.geminiApiKey);
 
       this.log('System state successfully loaded.');
     } catch (error) {
@@ -1163,7 +1167,7 @@ export class TradingEngine {
     const openTrades = this.trades.filter(t => t.status === 'OPEN');
     const closedTrades = this.trades.filter(t => t.status === 'CLOSED');
     const netProfit = this.stats.netProfitUSDT;
-    
+
     // ROI Basado en el balance inicial de 10,000 (standard en el bot)
     const roi = (netProfit / 10000) * 100;
     const runningEmoji = this.config.isRunning ? '🚀 *EJECUTANDO*' : '💤 *PAUSADO*';
@@ -1195,7 +1199,7 @@ export class TradingEngine {
     const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
     const now = Date.now();
     if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS || !this.config.telegramBotToken || !this.config.telegramChatId) {
-      return; 
+      return;
     }
 
     this.lastSummaryTime = now;
