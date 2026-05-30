@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as WebSocket from 'ws';
 import cors from 'cors';
 import * as dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import * as path from 'path';
 import { TradingEngine } from './bot/tradingEngine';
 import { saveTradeToHistory } from './persistence';
@@ -123,13 +124,6 @@ app.get('*', (req: Request, res: Response) => {
   res.sendFile(path.join(clientDistPath, 'index.html'));
 });
 
-// Start ticker processing immediately if config shows it was running previously
-if (engine.getStatePayload().config.isRunning) {
-  // Turn it off first to avoid double tickers
-  engine.updateConfig({ isRunning: false });
-  engine.startBot();
-}
-
 // WebSocket connection handler
 wss.on('connection', (ws) => {
   // Send current state on connection
@@ -148,27 +142,37 @@ wss.on('connection', (ws) => {
 });
 
 // Start Server
-server.listen(PORT, () => {
-  console.log(`==================================================`);
-  console.log(`🚀 DOGE/USDT AI Trading Engine server is active!`);
-  console.log(`   REST API: http://localhost:${PORT}/api`);
-  console.log(`   WebSockets: ws://localhost:${PORT}`);
-  console.log(`==================================================`);
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/doge-bot';
 
-  // Self-ping to prevent Render Free Tier from putting the app to sleep
-  const selfPingUrl = process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL;
-  if (selfPingUrl) {
-    console.log(`[Self-Ping] Configured for URL: ${selfPingUrl}`);
-    // Ping every 10 minutes (600,000 ms)
-    setInterval(async () => {
-      try {
-        const response = await fetch(`${selfPingUrl}/api/state`);
-        console.log(`[Self-Ping] Keep-alive ping sent to ${selfPingUrl}/api/state - Status: ${response.status}`);
-      } catch (e: any) {
-        console.error(`[Self-Ping] Keep-alive ping failed: ${e.message}`);
+mongoose.connect(MONGODB_URI)
+  .then(async () => {
+    console.log('✨ Connected to MongoDB Atlas');
+
+    // Initialize engine (loads state and trades from DB)
+    await engine.initialize();
+
+    server.listen(PORT, () => {
+      console.log(`==================================================`);
+      console.log(`🚀 DOGE/USDT AI Trading Engine server is active!`);
+      console.log(`   REST API: http://localhost:${PORT}/api`);
+      console.log(`   WebSockets: ws://localhost:${PORT}`);
+      console.log(`==================================================`);
+
+      // Self-ping logic
+      const selfPingUrl = process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL;
+      if (selfPingUrl) {
+        setInterval(async () => {
+          try {
+            const response = await fetch(selfPingUrl);
+            console.log(`[Self-Ping] Heartbeat: ${response.status}`);
+          } catch (e: any) {
+            console.error(`[Self-Ping] Heartbeat failed: ${e.message}`);
+          }
+        }, 5 * 60 * 1000);
       }
-    }, 10 * 60 * 1000);
-  } else {
-    console.log('[Self-Ping] Disabled. Define RENDER_EXTERNAL_URL or SELF_PING_URL in environment/env to activate.');
-  }
-});
+    });
+  })
+  .catch(err => {
+    console.error('❌ MongoDB Connection Error:', err);
+    process.exit(1);
+  });

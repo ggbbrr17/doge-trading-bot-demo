@@ -1,11 +1,20 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import mongoose from 'mongoose';
 import { BinanceClient } from '../utils/binanceClient';
 import { CustomNeuralNetwork } from './aiModel';
 import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicators } from './strategies';
 import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
 import { hmmService, HMMResult } from './hmmService';
+import { TradeModel } from '../persistence';
+
+// Esquema para guardar la configuración y stats del bot
+const BotStateSchema = new mongoose.Schema({
+  key: { type: String, default: 'current_state' },
+  config: Object,
+  stats: Object,
+  updatedAt: { type: Date, default: Date.now }
+});
+const BotStateModel = mongoose.model('BotState', BotStateSchema);
 
 export interface Trade {
   id: string;
@@ -42,6 +51,7 @@ export interface BotStats {
   losingTrades: number;
   dailyPnL?: number;
   lastPnLReset?: string;
+  lastTelegramUpdateId?: number;
 }
 
 export interface BotConfig {
@@ -83,14 +93,13 @@ export class TradingEngine {
   private lastHmmFetchTime = 0;
   private isHmmFetching = false;
 
+  private telegramIntervalId: NodeJS.Timeout | null = null;
   private lastSummaryTime = 0;
-
   private activeIntervalId: NodeJS.Timeout | null = null;
   private onUpdateCallback: (() => void) | null = null;
   private tickCount = 0;
 
   constructor() {
-    this.stateFilePath = path.join(process.cwd(), 'trading_state.json');
     this.neuralNet = new CustomNeuralNetwork();
     this.strategyManager = new StrategyManager(this.neuralNet);
     this.evolutionEngine = new EvolutionEngine();
@@ -101,13 +110,13 @@ export class TradingEngine {
       mode: 'DEMO',
       isRunning: false,
       strategy: 'AI_UNIFIED',
-      tradeSizeUSDT: 50,
-      geminiApiKey: '',
-      binanceApiKey: '',
-      binanceApiSecret: '',
+      tradeSizeUSDT: Number(process.env.TRADE_SIZE_USDT) || 50,
+      geminiApiKey: process.env.GEMINI_API_KEY || '',
+      binanceApiKey: process.env.BINANCE_API_KEY || '',
+      binanceApiSecret: process.env.BINANCE_API_SECRET || '',
       gridLayers: 3,
-      marketType: 'SPOT',
-      leverage: 5,
+      marketType: (process.env.MARKET_TYPE as 'SPOT' | 'FUTURES') || 'SPOT',
+      leverage: Number(process.env.LEVERAGE) || 5,
       telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
       telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
     };
@@ -125,7 +134,13 @@ export class TradingEngine {
       lastPnLReset: new Date().toISOString().split('T')[0]
     };
 
-    this.loadState();
+    // Nota: loadState ahora es asíncrono, se llama desde el inicio del servidor
+  }
+
+  public async initialize() {
+    await this.loadState();
+    await this.loadActiveTradesFromDb();
+    this.log('Engine initialized with MongoDB state.');
 
     // Propagate loaded API key to AI services on startup
     if (this.config.geminiApiKey) {
@@ -135,9 +150,24 @@ export class TradingEngine {
       this.log('⚠️ No Gemini API Key found in persistent state.');
     }
 
+    // Auto-start si está configurado por entorno para asegurar 24/7
+    if (process.env.AUTO_START === 'true') {
+      setTimeout(() => this.startBot(), 5000);
+    }
+
     this.initializeBinance();
     this.initializeTelegram();
     this.seedCandles();
+  }
+
+  private async loadActiveTradesFromDb() {
+    try {
+      const activeTrades = await TradeModel.find({ status: 'OPEN' });
+      this.trades = activeTrades.map(t => t.toObject() as any);
+      this.log(`Loaded ${this.trades.length} active trades from MongoDB.`);
+    } catch (e) {
+      this.log('Failed to load active trades from DB.');
+    }
   }
 
   // Set visual websocket update callback
@@ -236,42 +266,90 @@ export class TradingEngine {
 
   // Initialize/Update Telegram connection (just logs for now)
   initializeTelegram() {
+    if (this.telegramIntervalId) {
+      clearInterval(this.telegramIntervalId);
+      this.telegramIntervalId = null;
+    }
+
     if (this.config.telegramBotToken && this.config.telegramChatId) {
-      this.log('Telegram notifications enabled.');
+      this.log('Telegram notifications and commands enabled.');
+      // Poll for new messages every 5 seconds
+      this.telegramIntervalId = setInterval(() => this.handleTelegramUpdates(), 5000);
     } else {
       this.log('Telegram notifications disabled (missing token or chat ID).');
     }
   }
 
-  // Load state from file
-  private loadState() {
-    if (fs.existsSync(this.stateFilePath)) {
-      try {
-        const fileContent = fs.readFileSync(this.stateFilePath, 'utf-8');
-        const state = JSON.parse(fileContent);
-        if (state.config) this.config = { ...this.config, ...state.config };
-        if (state.stats) this.stats = { ...this.stats, ...state.stats };
-        if (state.trades) this.trades = state.trades;
-        this.log('System state successfully loaded from local persistence.');
-      } catch (error) {
-        this.log('Failed to parse previous state file. Launching with fresh matrix.');
+  private async handleTelegramUpdates() {
+    const token = this.config.telegramBotToken;
+    if (!token) return;
+
+    try {
+      const offset = this.stats.lastTelegramUpdateId ? this.stats.lastTelegramUpdateId + 1 : 0;
+      const response = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=10`);
+
+      if (!response.ok) return;
+
+      const data = await response.json() as any;
+      if (data.ok && data.result.length > 0) {
+        for (const update of data.result) {
+          this.stats.lastTelegramUpdateId = update.update_id;
+
+          const message = update.message;
+          if (!message || !message.text) continue;
+
+          const text = message.text.toLowerCase().trim();
+          const chatId = message.chat.id.toString();
+
+          if (chatId === this.config.telegramChatId) {
+            if (text.includes('como va todo') || text.includes('status') || text.includes('estado')) {
+              this.log('📨 Telegram command: Full Status Report requested.');
+              const report = await this.generateStatusReport();
+              await this.sendTelegramMessage(report);
+            } else if (text.includes('mercado') || text.includes('como va')) {
+              this.log('📨 Telegram command: Market Summary request.');
+              const summary = await this.gemmaService.generateMarketSummary();
+              await this.sendTelegramMessage(`🤖 *Análisis de Mercado:* \n\n${summary}`);
+            }
+          }
+        }
+        this.saveState();
       }
-    } else {
-      this.log('No state file detected. Initializing fresh trading engine matrix.');
+    } catch (error: any) {
+      // Fail silently to avoid clogging logs during polling
+    }
+  }
+
+  // Load state from file
+  private async loadState() {
+    try {
+      const state = await BotStateModel.findOne({ key: 'current_state' });
+      if (state) {
+        // Combinar configuración guardada, pero asegurar que no sobreescribimos con vacíos si hay env vars
+        const savedConfig = state.config || {};
+        this.config = { ...this.config, ...savedConfig };
+        if (state.stats) this.stats = { ...this.stats, ...state.stats };
+      }
+
+      // Fallback: Si después de cargar de DB las llaves están vacías, usar las de Render (env vars)
+      if (!this.config.geminiApiKey) this.config.geminiApiKey = process.env.GEMINI_API_KEY || '';
+      if (!this.config.binanceApiKey) this.config.binanceApiKey = process.env.BINANCE_API_KEY || '';
+      if (!this.config.binanceApiSecret) this.config.binanceApiSecret = process.env.BINANCE_API_SECRET || '';
+
+      this.log('System state successfully loaded.');
+    } catch (error) {
+      this.log('Failed to load state from DB. Using defaults.');
     }
   }
 
   // Save state to file
-  private saveState() {
+  private async saveState() {
     try {
-      const stateToSave = {
-        config: this.config,
-        stats: this.stats,
-        trades: this.trades,
-      };
-      const tempPath = `${this.stateFilePath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(stateToSave, null, 2), 'utf-8');
-      fs.renameSync(tempPath, this.stateFilePath);
+      await BotStateModel.findOneAndUpdate(
+        { key: 'current_state' },
+        { config: this.config, stats: this.stats, updatedAt: new Date() },
+        { upsert: true }
+      );
     } catch (error) {
       console.error('Error saving system state:', error);
     }
@@ -1081,64 +1159,50 @@ export class TradingEngine {
     await this.sendPeriodicSummary();
   }
 
-  private async sendPeriodicSummary() {
-    const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
-    const now = Date.now();
-
-    if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS) {
-      return; // Not time yet
-    }
-
-    if (!this.config.telegramBotToken || !this.config.telegramChatId) {
-      return; // Telegram not configured
-    }
-
-    this.lastSummaryTime = now;
-    this.log('📊 Generando reporte periódico de 3 horas para Telegram...');
-
-    // 1. Open Trades
+  /** Genera un reporte detallado de la situación actual del bot */
+  private async generateStatusReport(): Promise<string> {
     const openTrades = this.trades.filter(t => t.status === 'OPEN');
+    const closedTrades = this.trades.filter(t => t.status === 'CLOSED');
+    const netProfit = this.stats.netProfitUSDT;
+
+    // ROI Basado en el balance inicial de 10,000 (standard en el bot)
+    const roi = (netProfit / 10000) * 100;
+    const runningEmoji = this.config.isRunning ? '🚀 *EJECUTANDO*' : '💤 *PAUSADO*';
+    const marketNews = await this.gemmaService.generateMarketSummary();
+
     let openSummary = '';
     if (openTrades.length === 0) {
-      openSummary = 'Ninguna operación abierta.';
+      openSummary = '_Sin posiciones activas._';
     } else {
       openSummary = openTrades.map(t => {
         const pnlStr = (t.pnlPercent || 0) >= 0 ? `+${(t.pnlPercent || 0).toFixed(2)}%` : `${(t.pnlPercent || 0).toFixed(2)}%`;
         const emoji = (t.pnlPercent || 0) >= 0 ? '🟢' : '🔴';
-        return `• ${t.side} $${t.amount.toFixed(2)} | PnL: ${emoji} ${pnlStr}`;
+        return `• ${t.side} | $${t.amount.toFixed(2)} | ${emoji} ${pnlStr}`;
       }).join('\n');
     }
 
-    // 2. Closed Trades in the last 3 hours
-    const threeHoursAgo = now - SUMMARY_INTERVAL_MS;
-    const recentClosed = this.trades.filter(t => t.status === 'CLOSED' && (t.exitTimestamp || 0) > threeHoursAgo);
-    let closedSummary = '';
-    let recentNetProfit = 0;
-    if (recentClosed.length === 0) {
-      closedSummary = 'Ninguna operación cerrada en las últimas 3 horas.';
-    } else {
-      recentNetProfit = recentClosed.reduce((sum, t) => sum + (t.pnl || 0), 0);
-      const winCount = recentClosed.filter(t => (t.pnl || 0) > 0).length;
-      const lossCount = recentClosed.length - winCount;
-      const emoji = recentNetProfit >= 0 ? '🤑' : '📉';
-      closedSummary = `Se cerraron ${recentClosed.length} operaciones (${winCount}W / ${lossCount}L).\n` +
-        `PnL del periodo: ${emoji} $${recentNetProfit.toFixed(2)}`;
+    return `📊 *REPORTE DE ESTADO* \n` +
+      `Motor: ${runningEmoji}\n` +
+      `Balance: \`$${this.stats.totalBalanceUSDT.toFixed(2)} USDT\`\n` +
+      `ROI Total: *${roi >= 0 ? '📈' : '📉'} ${roi.toFixed(2)}%*\n\n` +
+      `*📦 Operaciones Abiertas:* \n${openSummary}\n\n` +
+      `*✅ Operaciones Cerradas:* ${closedTrades.length}\n` +
+      `Win Rate: ${this.stats.winRatePercent}%\n` +
+      `Beneficio Realizado: $${netProfit.toFixed(2)}\n\n` +
+      `*🤖 Visión de la IA (Gemma 4):*\n${marketNews}`;
+  }
+
+  private async sendPeriodicSummary() {
+    const SUMMARY_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3 hours
+    const now = Date.now();
+    if (now - this.lastSummaryTime < SUMMARY_INTERVAL_MS || !this.config.telegramBotToken || !this.config.telegramChatId) {
+      return;
     }
 
-    // 3. Market Summary from Gemma
-    const marketNews = await this.gemmaService.generateMarketSummary();
-
-    // 4. HMM Regime
-    const regimeStr = this.currentRegime ? this.currentRegime.current_regime : 'Desconocido';
-
-    // Construct the final message
-    const message = `*DOGE Bot | Reporte de 3 Horas* 🕒\n\n` +
-      `*1️⃣ Operaciones Abiertas (${openTrades.length})*\n${openSummary}\n\n` +
-      `*2️⃣ Actividad Reciente*\n${closedSummary}\n\n` +
-      `*3️⃣ Régimen de Mercado (HMM)*\n🧠 Detectado: \`${regimeStr}\`\n\n` +
-      `*4️⃣ Visión del Mercado & Noticias*\n${marketNews}`;
-
-    await this.sendTelegramMessage(message);
+    this.lastSummaryTime = now;
+    this.log('📊 Generando reporte periódico para Telegram...');
+    const message = await this.generateStatusReport();
+    await this.sendTelegramMessage(`🕒 *Reporte Automático (3h)*\n\n${message}`);
     this.log('✅ Reporte de 3 horas enviado a Telegram exitosamente.');
   }
 }
