@@ -823,7 +823,7 @@ export class TradingEngine {
         const isFutures = this.config.marketType === 'FUTURES';
         // En Hedge Mode, necesitamos especificar positionSide: LONG o SHORT
         const positionSide = isFutures ? (side === 'BUY' ? 'LONG' : 'SHORT') : undefined;
-        const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity, undefined, isFutures, positionSide);
+        const order = await this.binanceClient.placeOrder(symbol, side, 'MARKET', quantity, undefined, false, positionSide);
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)
           : (order.fills && order.fills.length > 0
@@ -875,7 +875,7 @@ export class TradingEngine {
         const isFutures = this.config.marketType === 'FUTURES';
         // En Hedge Mode, positionSide debe coincidir con el lado de la posición original
         const positionSide = isFutures ? (trade.side === 'BUY' ? 'LONG' : 'SHORT') : undefined;
-        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity, undefined, isFutures, positionSide);
+        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity, undefined, true, positionSide);
 
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)

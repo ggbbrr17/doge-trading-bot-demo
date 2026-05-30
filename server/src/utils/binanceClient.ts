@@ -188,7 +188,8 @@ export class BinanceClient {
     type: 'LIMIT' | 'MARKET',
     quantity: number,
     price?: number,
-    reduceOnly?: boolean
+    reduceOnly?: boolean,
+    positionSide?: 'LONG' | 'SHORT'
   ): Promise<any> {
     const endpoint = this.isFutures ? '/fapi/v1/order' : '/api/v3/order';
 
@@ -214,6 +215,10 @@ export class BinanceClient {
 
     if (this.isFutures && reduceOnly) {
       params.reduceOnly = 'true';
+    }
+
+    if (this.isFutures && positionSide) {
+      params.positionSide = positionSide;
     }
 
     return this.signedRequest(endpoint, 'POST', params);
