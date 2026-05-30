@@ -945,7 +945,7 @@ export class StrategyManager {
     const botHerd = this.getBotHerdSignal(indicators);
     const omega = this.getOmegaInversionSignal(indicators, priceHistory);
     const spectral = this.getFourierCycleSignal(indicators);
-    const obFlow = this.getOrderBookFlowSignal(obiSignal);
+    const obFlow = this.getOrderBookFlowSignal(obiSignal ?? null);
 
     // Modify strategy weighting based on the detected HMM market regime
     // Trend strategies: Oracle, KalmanHurst
