@@ -6,6 +6,7 @@ import { EvolutionEngine } from './evolutionEngine';
 import { GemmaService, GemmaSignal } from './gemmaService';
 import { hmmService, HMMResult } from './hmmService';
 import { TradeModel } from '../persistence';
+import { OrderBookSignal } from '../orderBookSensor';
 
 // Esquema para guardar la configuración y stats del bot
 const BotStateSchema = new mongoose.Schema({
@@ -65,7 +66,6 @@ export interface BotConfig {
   gridLayers: number;
   marketType: 'SPOT' | 'FUTURES';
   leverage: number;
-  dailyProfitTarget?: number; // Meta de ganancia diaria en USDT
   telegramBotToken?: string;
   telegramChatId?: string;
 }
@@ -84,6 +84,7 @@ export class TradingEngine {
   private evolutionEngine: EvolutionEngine;
   private gemmaService: GemmaService;
   private cachedGemmaSignal: GemmaSignal | null = null;
+  private cachedOrderBook: OrderBookSignal | null = null;
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
   private binanceClient: BinanceClient | null = null;
@@ -435,14 +436,6 @@ export class TradingEngine {
         return;
       }
 
-      // Meta de Ganancia Diaria: Asegurar beneficios
-      const dailyTarget = this.config.dailyProfitTarget || (this.config.tradeSizeUSDT * 1.5);
-      if (this.stats.dailyPnL !== undefined && this.stats.dailyPnL >= dailyTarget) {
-        this.log(`💰 TARGET REACHED: Meta de ganancia diaria alcanzada ($${this.stats.dailyPnL.toFixed(2)}). Cerrando sesión por hoy con éxito.`);
-        this.stopBot();
-        return;
-      }
-
       // 1. Fetch current price
       let currentPrice = 0;
       try {
@@ -457,6 +450,19 @@ export class TradingEngine {
       this.updateCandles(currentPrice);
       this.pricesBuffer.push(currentPrice);
       if (this.pricesBuffer.length > 1000) this.pricesBuffer.shift(); // Aumentamos el buffer para análisis MTF
+
+      // Update Order Book Snapshot for Strategy 9
+      try {
+        const depth = await this.binanceClient?.getOrderBook('DOGEUSDT', 10);
+        if (depth) {
+          const bidVol = depth.bids.reduce((s, b) => s + parseFloat(b[1]), 0);
+          const askVol = depth.asks.reduce((s, a) => s + parseFloat(a[1]), 0);
+          const obi = (bidVol - askVol) / (bidVol + askVol);
+          this.cachedOrderBook = { obi, microPressure: obi * 1.2, wallSide: 'NONE', wallPrice: 0 };
+        }
+      } catch (e) {
+        this.cachedOrderBook = null;
+      }
 
       // 3. Compute indicators
       const indicators = calculateIndicators(this.pricesBuffer, this.candles);
