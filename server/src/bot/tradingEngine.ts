@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { BinanceClient } from '../utils/binanceClient';
+const MockBinanceClient: any = require('../utils/mockBinanceClient').MockBinanceClient;
 import { CustomNeuralNetwork } from './aiModel';
 import { calculateIndicators, StrategyManager, StrategySignal, TechnicalIndicators } from './strategies';
 import { EvolutionEngine } from './evolutionEngine';
@@ -89,7 +90,8 @@ export class TradingEngine {
   private cachedOrderBook: OrderBookSignal | null = null;
   private lastGemmaFetchTime = 0;
   private isGemmaFetching = false;
-  private binanceClient: BinanceClient | null = null;
+  private binanceClient: any = null;
+  private skipDb: boolean = false;
 
   private currentRegime: HMMResult | null = null;
   private lastHmmFetchTime = 0;
@@ -140,9 +142,43 @@ export class TradingEngine {
     // Nota: loadState ahora es asíncrono, se llama desde el inicio del servidor
   }
 
-  public async initialize() {
-    await this.loadState();
-    await this.loadActiveTradesFromDb();
+  // Public helper to simulate a quick round-trip trade (used for testing)
+  public async simulateTrade(): Promise<{ entryId?: string; exitPnl?: number } | null> {
+    try {
+      const currentPrice = this.pricesBuffer[this.pricesBuffer.length - 1] || 0.42;
+      const indicators = calculateIndicators(this.pricesBuffer, this.candles);
+
+      // Force a BUY entry
+      await this.executeEntry('BUY', currentPrice, 'SIMULATED ENTRY', undefined, undefined, indicators);
+
+      // Find the last open trade we just created
+      const open = this.trades.slice().reverse().find(t => t.status === 'OPEN');
+      if (!open) return null;
+
+      // Simulate a favorable move (TP) by increasing price by targetTP or a small default
+      const tp = (open.targetTP || 0.35) / 100;
+      const exitPrice = parseFloat((open.price * (1 + Math.max(tp, 0.003))).toFixed(6));
+
+      // Wait briefly to mimic time passing
+      await new Promise(r => setTimeout(r, 400));
+
+      await this.executeExit(open, exitPrice, 'SIMULATED EXIT: Quick scalp profit');
+
+      return { entryId: open.id, exitPnl: open.pnl || 0 };
+    } catch (e: any) {
+      this.log(`Simulated trade failed: ${e?.message || e}`);
+      return null;
+    }
+  }
+
+  public async initialize(skipDb: boolean = false) {
+    this.skipDb = skipDb;
+    if (!skipDb) {
+      await this.loadState();
+      await this.loadActiveTradesFromDb();
+    } else {
+      this.log('⚠️ Running without MongoDB - using in-memory state for testing.');
+    }
     this.log('Engine initialized with MongoDB state.');
 
     // Propagate loaded API key to AI services on startup
@@ -164,6 +200,7 @@ export class TradingEngine {
   }
 
   private async loadActiveTradesFromDb() {
+    if (this.skipDb) return;
     try {
       const activeTrades = await TradeModel.find({ status: 'OPEN' });
       this.trades = activeTrades.map((t: any) => t.toObject() as any);
@@ -256,11 +293,17 @@ export class TradingEngine {
       if (this.config.marketType === 'FUTURES') {
         this.binanceClient.setLeverage('DOGEUSDT', this.config.leverage)
           .then(() => this.log(`Binance leverage successfully configured to ${this.config.leverage}x.`))
-          .catch((err) => this.log(`Warning: Failed to set Binance leverage to ${this.config.leverage}x: ${err.message}`));
+          .catch((err: any) => this.log(`Warning: Failed to set Binance leverage to ${this.config.leverage}x: ${err?.message || err}`));
       }
     } else {
-      this.binanceClient = null;
-      this.log(`WARNING: Binance keys are missing. Verification required for ${this.config.mode} mode.`);
+      // If running in TESTNET or in-memory mode, use a Mock client to simulate orders
+      if (this.config.mode === 'TESTNET') {
+        this.binanceClient = (new MockBinanceClient({ isTestnet: true, marketType: this.config.marketType }) as any);
+        this.log('INFO: Using MockBinanceClient for TESTNET simulation.');
+      } else {
+        this.binanceClient = null;
+        this.log(`WARNING: Binance keys are missing. Verification required for ${this.config.mode} mode.`);
+      }
     }
   }
 
@@ -352,6 +395,7 @@ export class TradingEngine {
 
   // Save state to file
   private async saveState() {
+    if (this.skipDb) return;
     try {
       await BotStateModel.findOneAndUpdate(
         { key: 'current_state' },
@@ -902,12 +946,14 @@ export class TradingEngine {
           }
 
           // Persistir actualización en DB
-          await TradeModel.findOneAndUpdate({ id: existingTrade.id }, {
-            quantity: existingTrade.quantity,
-            price: existingTrade.price,
-            amount: existingTrade.amount,
-            reason: existingTrade.reason
-          });
+          if (!this.skipDb) {
+            await TradeModel.findOneAndUpdate({ id: existingTrade.id }, {
+              quantity: existingTrade.quantity,
+              price: existingTrade.price,
+              amount: existingTrade.amount,
+              reason: existingTrade.reason
+            });
+          }
           this.log(`🔄 Posición acumulada: ${side} ${symbol}. Nuevo Tamaño: ${existingTrade.quantity.toFixed(1)}, Precio Promedio: $${existingTrade.price.toFixed(5)}`);
         } else {
           const trade: Trade = {
@@ -927,7 +973,9 @@ export class TradingEngine {
             lowestPrice: fillPrice,
           };
           this.trades.push(trade);
-          await TradeModel.create(trade);
+          if (!this.skipDb) {
+            await TradeModel.create(trade);
+          }
           this.log(`✅ Nueva posición abierta: ${trade.id}. Precio: $${fillPrice.toFixed(5)}`);
         }
 
@@ -951,7 +999,7 @@ export class TradingEngine {
         const isFutures = this.config.marketType === 'FUTURES';
         // En Hedge Mode, positionSide debe coincidir con el lado de la posición original
         const positionSide = isFutures ? (trade.side === 'BUY' ? 'LONG' : 'SHORT') : undefined;
-        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity, undefined, true, positionSide);
+        const order = await this.binanceClient.placeOrder(trade.symbol, exitSide, 'MARKET', trade.quantity, undefined, isFutures, positionSide);
 
         const fillPrice = (order.avgPrice && parseFloat(order.avgPrice) > 0)
           ? parseFloat(order.avgPrice)
@@ -1083,7 +1131,7 @@ export class TradingEngine {
         if (dogePositions.length === 0 && openDogeTrades.length > 0) {
           for (const t of openDogeTrades) {
             t.status = 'CLOSED';
-            await TradeModel.findOneAndUpdate({ id: t.id }, { status: 'CLOSED' });
+            if (!this.skipDb) await TradeModel.findOneAndUpdate({ id: t.id }, { status: 'CLOSED' });
           }
           this.log(`⚠️ SYNC: Posición vacía en Binance. Limpiando registros locales.`);
         }
@@ -1105,10 +1153,10 @@ export class TradingEngine {
           } else if (amt >= 0.1) {
             // Si hay múltiples filas para la misma posición, unificar en la primera
             if (matchingTrades.length !== 1 || Math.abs(matchingTrades[0].quantity - amt) > 0.1) {
-              if (matchingTrades.length === 0) {
+                if (matchingTrades.length === 0) {
                 const syncTrade: any = { id: `SYNC-${botSide}-${Date.now()}`, symbol: 'DOGEUSDT', side: botSide, price: entry, quantity: amt, amount: entry * amt, timestamp: Date.now(), status: 'OPEN', reason: 'EXCHANGE SYNC' };
                 this.trades.push(syncTrade);
-                await TradeModel.create(syncTrade);
+                if (!this.skipDb) await TradeModel.create(syncTrade);
               } else {
                 this.log(`🔄 RECONCILIACIÓN: Fusionando ${matchingTrades.length} filas en una única posición de ${amt} DOGE.`);
                 const main = matchingTrades[0];
@@ -1117,9 +1165,9 @@ export class TradingEngine {
                 main.amount = entry * amt;
                 for (let i = 1; i < matchingTrades.length; i++) {
                   matchingTrades[i].status = 'CLOSED';
-                  await TradeModel.findOneAndUpdate({ id: matchingTrades[i].id }, { status: 'CLOSED' });
+                  if (!this.skipDb) await TradeModel.findOneAndUpdate({ id: matchingTrades[i].id }, { status: 'CLOSED' });
                 }
-                await TradeModel.findOneAndUpdate({ id: main.id }, { quantity: amt, price: entry, amount: main.amount });
+                if (!this.skipDb) await TradeModel.findOneAndUpdate({ id: main.id }, { quantity: amt, price: entry, amount: main.amount });
               }
             }
           }
@@ -1154,7 +1202,7 @@ export class TradingEngine {
 
       for (const t of toClean) {
         t.status = 'CLOSED';
-        await TradeModel.findOneAndUpdate({ id: t.id }, { status: 'CLOSED' });
+        if (!this.skipDb) await TradeModel.findOneAndUpdate({ id: t.id }, { status: 'CLOSED' });
       }
 
       this.log(`Cleaned ${toClean.length} stale non-accumulated trade(s).`);

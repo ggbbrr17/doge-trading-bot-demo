@@ -119,6 +119,17 @@ app.post('/api/send-telegram-summary', async (req: Request, res: Response) => {
   }
 });
 
+// Simulate a quick test trade (entry + exit) — useful for validating flow without real exchange
+app.post('/api/simulate-trade', async (req: Request, res: Response) => {
+  try {
+    const result = await engine.simulateTrade();
+    if (!result) return res.status(500).json({ success: false, error: 'No trade simulated' });
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Fallback to serve index.html for SPA routing
 app.get('*', (req: Request, res: Response) => {
   res.sendFile(path.join(clientDistPath, 'index.html'));
@@ -145,43 +156,42 @@ wss.on('connection', (ws) => {
 const MONGODB_URI = process.env.MONGODB_URI || '';
 
 if (!MONGODB_URI) {
-  console.error('❌ CRITICAL: MONGODB_URI is not defined in environment variables.');
-  process.exit(1);
-}
-
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 10000, // Aumentamos el tiempo de espera
-  heartbeatFrequencyMS: 2000,      // Mantiene la conexión viva
-  socketTimeoutMS: 45000,
-})
-  .then(async () => {
-    console.log('✨ Connected to MongoDB Atlas');
-
-    // Initialize engine (loads state and trades from DB)
-    await engine.initialize();
-
+  console.warn('⚠️ MONGODB_URI not set. Starting server in in-memory TEST mode (no persistence).');
+  // Initialize engine without DB
+  engine.initialize(true).then(() => {
     server.listen(PORT, () => {
       console.log(`==================================================`);
-      console.log(`🚀 DOGE/USDT AI Trading Engine server is active!`);
+      console.log(`🚀 DOGE/USDT AI Trading Engine server is active (no MongoDB)!`);
       console.log(`   REST API: http://localhost:${PORT}/api`);
       console.log(`   WebSockets: ws://localhost:${PORT}`);
       console.log(`==================================================`);
-
-      // Self-ping logic
-      const selfPingUrl = process.env.RENDER_EXTERNAL_URL || process.env.SELF_PING_URL;
-      if (selfPingUrl) {
-        setInterval(async () => {
-          try {
-            const response = await fetch(selfPingUrl);
-            console.log(`[Self-Ping] Heartbeat: ${response.status}`);
-          } catch (e: any) {
-            console.error(`[Self-Ping] Heartbeat failed: ${e.message}`);
-          }
-        }, 5 * 60 * 1000);
-      }
     });
-  })
-  .catch((err: Error) => {
-    console.error('❌ MongoDB Connection Error:', err);
+  }).catch((err: any) => {
+    console.error('Failed to initialize engine in in-memory mode:', err);
     process.exit(1);
   });
+} else {
+  mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 10000, // Aumentamos el tiempo de espera
+    heartbeatFrequencyMS: 2000,      // Mantiene la conexión viva
+    socketTimeoutMS: 45000,
+  })
+    .then(async () => {
+      console.log('✨ Connected to MongoDB Atlas');
+
+      // Initialize engine (loads state and trades from DB)
+      await engine.initialize();
+
+      server.listen(PORT, () => {
+        console.log(`==================================================`);
+        console.log(`🚀 DOGE/USDT AI Trading Engine server is active!`);
+        console.log(`   REST API: http://localhost:${PORT}/api`);
+        console.log(`   WebSockets: ws://localhost:${PORT}`);
+        console.log(`==================================================`);
+      });
+    })
+    .catch((err: Error) => {
+      console.error('❌ MongoDB Connection Error:', err);
+      process.exit(1);
+    });
+}

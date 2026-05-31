@@ -1339,7 +1339,7 @@ export default function App() {
                     <th>Margin</th>
                     <th>TARGET SL/TP</th>
                     <th>Status</th>
-                    <th>AI REASONING</th>
+                    <th>NN Conf</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1371,7 +1371,10 @@ export default function App() {
                         <td>
                           <span className="text-neon-cyan animate-pulse">RUNNING</span>
                         </td>
-                        <td className="text-slate-400 max-w-[200px] truncate">{trade.reason}</td>
+                        <td className="text-[12px] text-slate-300 font-mono">
+                          <div>BUY: {Math.round((neuralNet.outputs[0] || 0) * 100)}%</div>
+                          <div>SELL: {Math.round((neuralNet.outputs[1] || 0) * 100)}%</div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1402,14 +1405,17 @@ export default function App() {
                           <div className="text-neon-green">TP: {trade.targetTP}%</div>
                         </td>
                         <td>CLOSED</td>
-                        <td className="text-slate-400 max-w-[200px] truncate">{trade.reason}</td>
+                        <td className="text-[12px] text-slate-400 font-mono">
+                          <div>BUY: {Math.round((neuralNet.outputs[0] || 0) * 100)}%</div>
+                          <div>SELL: {Math.round((neuralNet.outputs[1] || 0) * 100)}%</div>
+                        </td>
                       </tr>
                     );
                   })}
 
                   {trades.length === 0 && (
                     <tr>
-                      <td colSpan={11} className="text-center text-slate-500 italic py-6">
+                      <td colSpan={9} className="text-center text-slate-500 italic py-6">
                         No transactions logged inside current matrix. Activate the AI to commence trading operations.
                       </td>
                     </tr>
