@@ -69,6 +69,7 @@ export interface BotConfig {
   dailyProfitTarget?: number; // Meta de ganancia diaria en USDT
   telegramBotToken?: string;
   telegramChatId?: string;
+  scalpingMode?: boolean;
 }
 
 export class TradingEngine {
@@ -120,6 +121,7 @@ export class TradingEngine {
       leverage: Number(process.env.LEVERAGE) || 5,
       telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
       telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
+      scalpingMode: process.env.SCALPING_MODE === 'true' || false,
     };
 
     this.stats = {
@@ -658,7 +660,8 @@ export class TradingEngine {
       genes,
       signal, // pass Gemma as an extra vote
       this.currentRegime?.current_regime,
-      this.cachedOrderBook
+      this.cachedOrderBook,
+      this.config.scalpingMode || false
     );
 
     // Override local signal variable with the unified signal decision
@@ -696,7 +699,7 @@ export class TradingEngine {
           dynamicSL = (indicators.atr * 2.5 / indicators.currentPrice) * 100;
         }
 
-        await this.executeEntry('BUY', indicators.currentPrice, signal.reason, dynamicSL, signal.targetTP);
+        await this.executeEntry('BUY', indicators.currentPrice, signal.reason, dynamicSL, signal.targetTP, indicators);
       } else {
         this.log(`BUY Signal ignored: Price ($${indicators.currentPrice.toFixed(4)}) is too far above VWAP ($${indicators.vwap.toFixed(4)}). Waiting for mean reversion.`);
       }
@@ -715,8 +718,13 @@ export class TradingEngine {
       }
     } else if (signal.action === 'BUY' && hasActiveTrade) {
       // Allow safety orders/DCA buy signals if the unified signal suggests it (e.g. from voters)
-      this.log('AI Unified strategy triggered DCA buy.');
-      await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`, signal.targetSL, signal.targetTP);
+      if (this.config.scalpingMode) {
+        // In scalping mode we avoid DCA; skip aggressive averaging
+        this.log('Scalping mode: ignoring DCA safety order.');
+      } else {
+        this.log('AI Unified strategy triggered DCA buy.');
+        await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`, signal.targetSL, signal.targetTP, indicators);
+      }
 
       // Send Telegram notification for DCA entry
       // const telegramMsg = `*DOGE Bot Notification* 🤖\n\n` +
@@ -808,12 +816,21 @@ export class TradingEngine {
     };
   }
 
-  private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string, targetSL?: number, targetTP?: number) {
+  private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string, targetSL?: number, targetTP?: number, indicators?: any) {
     const symbol = 'DOGEUSDT';
 
-    // Defaults tuned for quick scalping: tight TP/SL when not provided
-    targetTP = targetTP ?? 0.35; // take profit default 0.35%
-    targetSL = targetSL ?? 0.25; // stop loss default 0.25%
+    // If indicators supplied or scalping mode active, ask the StrategyManager to compute optimal TP/SL
+    try {
+      if (this.strategyManager && (this.config.scalpingMode || targetTP === undefined || targetSL === undefined) && indicators) {
+        const dyn = this.strategyManager.getDynamicTargets(indicators, side, this.config.scalpingMode || false);
+        targetTP = dyn.targetTP;
+        targetSL = dyn.targetSL;
+      }
+    } catch (e) {
+      // fallback defaults
+      targetTP = targetTP ?? 0.35;
+      targetSL = targetSL ?? 0.25;
+    }
 
     // 1. MEJORA: Risk-Based Position Sizing (ATR + SL)
     // Calculamos el tamaño basado en cuánto dinero estamos dispuestos a perder si toca el SL.
@@ -863,7 +880,8 @@ export class TradingEngine {
             : quantity);
 
         // Lógica de Acumulación tipo Binance: Buscar posición abierta existente del mismo lado
-        const existingTrade = this.trades.find(t => t.symbol === symbol && t.side === side && t.status === 'OPEN');
+        // En modo scalping evitamos acumular en la misma fila
+        const existingTrade = (!this.config.scalpingMode) ? this.trades.find(t => t.symbol === symbol && t.side === side && t.status === 'OPEN') : undefined;
 
         if (existingTrade) {
           const oldTotal = existingTrade.price * existingTrade.quantity;
@@ -873,7 +891,15 @@ export class TradingEngine {
           existingTrade.price = (oldTotal + newTotal) / existingTrade.quantity;
           existingTrade.amount = existingTrade.price * existingTrade.quantity;
           existingTrade.timestamp = Date.now();
-          existingTrade.reason = `Accumulated: ${existingTrade.reason} | DCA: ${reason}`;
+          // Avoid repeating the 'Accumulated' prefix many times; keep compact marker
+          if (existingTrade.reason && existingTrade.reason.includes('Accumulated')) {
+            // Remove any previous DCA details and append a short marker
+            existingTrade.reason = existingTrade.reason.replace(/\s*\|\s*DCA:.*$/i, '');
+            existingTrade.reason = `${existingTrade.reason} | +DCA`;
+          } else {
+            const base = existingTrade.reason && existingTrade.reason.length > 0 ? existingTrade.reason : 'Entry';
+            existingTrade.reason = `Accumulated: ${base} | +DCA`;
+          }
 
           // Persistir actualización en DB
           await TradeModel.findOneAndUpdate({ id: existingTrade.id }, {

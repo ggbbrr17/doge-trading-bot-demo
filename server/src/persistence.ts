@@ -43,7 +43,7 @@ export const saveTradeToHistory = async (trade: any) => {
         await TradeModel.findOneAndUpdate(
             { id: trade.id },
             { ...trade, recordedAt: new Date(), marketCondition: "Analyzed" },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: 'after' }
         );
         console.log(`[MONGODB] Trade ${trade.id} persisted to database.`);
     } catch (error) {

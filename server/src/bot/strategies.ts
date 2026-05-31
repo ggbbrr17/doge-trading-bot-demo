@@ -920,6 +920,125 @@ export class StrategyManager {
     return { action: 'HOLD', confidence: 0.5, reason: `OB Flow: Neutral imbalance (${obi}).` };
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // STRATEGY 10: SCALPING MOMENTUM (SHORT TERM, HIGH-FREQUENCY)
+  // Designed for 1s-5s ticks: tight ATR, small phase changes and micro-OB
+  // ───────────────────────────────────────────────────────────────────────────
+  getScalpingMomentumSignal(indicators: TechnicalIndicators, priceHistory: number[] = []): StrategySignal {
+    const recent = priceHistory.length > 0 ? priceHistory.slice(-50) : [indicators.currentPrice];
+    const atr = indicators.atr || 0.0001;
+    const velocity = recent.length >= 2 ? (recent[recent.length - 1] - recent[recent.length - 2]) : 0;
+    const microMomentum = Math.abs(velocity) / (atr || 1);
+
+    // Buy when small positive momentum and price near VWAP and not overbought
+    if (velocity > 0 && indicators.currentPrice <= indicators.vwap * 1.002 && indicators.rsi < 65 && microMomentum > 0.05) {
+      return { action: 'BUY', confidence: 0.86, reason: 'ScalpingMomentum: short positive tick momentum.' , targetTP: 0.25, targetSL: 0.2 };
+    }
+
+    if (velocity < 0 && indicators.currentPrice >= indicators.vwap * 0.998 && indicators.rsi > 35 && microMomentum > 0.05) {
+      return { action: 'SELL', confidence: 0.86, reason: 'ScalpingMomentum: short negative tick momentum.' , targetTP: 0.25, targetSL: 0.2 };
+    }
+
+    return { action: 'HOLD', confidence: 0.5, reason: 'ScalpingMomentum: no micro-edge.' };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // STRATEGY 11: MICRO-RANGE SCALPING (TAKE SMALL SWINGS IN TIGHT RANGES)
+  // Detects micro-range oscillations and buys at lower bound, sells at upper bound
+  // ───────────────────────────────────────────────────────────────────────────
+  getMicroRangeSignal(indicators: TechnicalIndicators, priceHistory: number[] = []): StrategySignal {
+    const prices = priceHistory.length > 0 ? priceHistory.slice(-40) : [indicators.currentPrice];
+    if (prices.length < 10) return { action: 'HOLD', confidence: 0.5, reason: 'MicroRange: insufficient data.' };
+
+    const maxP = Math.max(...prices.slice(-12));
+    const minP = Math.min(...prices.slice(-12));
+    const rangePct = ((maxP - minP) / (minP || 1)) * 100;
+
+    // If range is tight but showing small mean reversion opportunities, scalping works
+    if (rangePct < 0.6) {
+      // near bottom -> buy
+      if (indicators.currentPrice <= minP * 1.001 && indicators.rsi < 60) {
+        return { action: 'BUY', confidence: 0.82, reason: 'MicroRange: bounce at micro-floor.', targetTP: 0.3, targetSL: 0.2 };
+      }
+      // near top -> sell
+      if (indicators.currentPrice >= maxP * 0.999 && indicators.rsi > 40) {
+        return { action: 'SELL', confidence: 0.82, reason: 'MicroRange: drop from micro-ceiling.', targetTP: 0.3, targetSL: 0.2 };
+      }
+    }
+
+    return { action: 'HOLD', confidence: 0.5, reason: 'MicroRange: no micro-range detected.' };
+  }
+
+  // Dynamic TP/SL generator driven by indicators and regime. Returns percents (e.g., 0.35 === 0.35%).
+  getDynamicTargets(indicators: TechnicalIndicators, side: 'BUY' | 'SELL', scalpingMode: boolean = false): { targetTP: number; targetSL: number } {
+    const price = indicators.currentPrice || 1;
+    const atr = Math.max(1e-8, indicators.atr || 0);
+    const spectral = indicators.spectralEnergy || 0;
+    const volPct = (atr / price); // absolute volatility ratio
+
+    if (scalpingMode) {
+      // aggressive small TP/SL for scalping
+      let baseTP = volPct * 100 * 1.2 + spectral * 0.15; // percent
+      baseTP = Math.max(0.15, Math.min(1.0, baseTP));
+      let baseSL = Math.max(0.12, Math.min(0.6, baseTP * 0.6));
+
+      // HTF alignment adjustments
+      if (indicators.htfAlignment === 'BULLISH' && side === 'BUY') baseTP *= 1.15;
+      if (indicators.htfAlignment === 'BEARISH' && side === 'BUY') baseTP *= 0.85;
+      if (indicators.htfAlignment === 'BEARISH' && side === 'SELL') baseTP *= 1.15;
+
+      // Bot activity widens stops slightly
+      if (indicators.botActivity > 2) baseSL *= 1.1;
+
+      // Allow neural network to modify TP/SL suggestions when available
+      try {
+        const emaRatio = indicators.ema.ema20 / (indicators.ema.ema50 || 1);
+        const bbRange = Math.max(1e-8, indicators.bollinger.upper - indicators.bollinger.lower);
+        const bbPosition = Math.max(0, Math.min(1, (price - indicators.bollinger.lower) / bbRange));
+        const norm = CustomNeuralNetwork.normalizeIndicators(indicators.rsi, indicators.macd.hist, emaRatio, bbPosition, indicators.botActivity || 0);
+        const out = this.neuralNet ? this.neuralNet.forward(norm) : null;
+        if (out) {
+          const idx = side === 'BUY' ? 0 : 1;
+          const factor = 0.6 + out[idx] * 1.6; // maps output(0..1) -> factor(0.6..2.2)
+          baseTP = Math.max(0.1, Math.min(2.0, baseTP * factor));
+          baseSL = Math.max(0.08, Math.min(1.5, baseSL * factor));
+        }
+      } catch (e) {
+        // ignore NN failure and keep base values
+      }
+
+      return { targetTP: parseFloat(baseTP.toFixed(2)), targetSL: parseFloat(baseSL.toFixed(2)) };
+    }
+
+    // Default non-scalping targets (wider)
+    let baseTP = volPct * 100 * 2.5 + spectral * 0.4; // percent
+    baseTP = Math.max(0.5, Math.min(5.0, baseTP));
+    let baseSL = Math.max(0.25, Math.min(3.0, baseTP * 0.75));
+
+    if (indicators.htfAlignment === 'BULLISH' && side === 'BUY') baseTP *= 1.2;
+    if (indicators.htfAlignment === 'BEARISH' && side === 'BUY') baseTP *= 0.85;
+    if (indicators.botActivity > 2) baseSL *= 1.15;
+
+    // Non-scalping branch: allow neural net to adjust wider targets
+    try {
+      const emaRatio = indicators.ema.ema20 / (indicators.ema.ema50 || 1);
+      const bbRange = Math.max(1e-8, indicators.bollinger.upper - indicators.bollinger.lower);
+      const bbPosition = Math.max(0, Math.min(1, (price - indicators.bollinger.lower) / bbRange));
+      const norm = CustomNeuralNetwork.normalizeIndicators(indicators.rsi, indicators.macd.hist, emaRatio, bbPosition, indicators.botActivity || 0);
+      const out = this.neuralNet ? this.neuralNet.forward(norm) : null;
+      if (out) {
+        const idx = side === 'BUY' ? 0 : 1;
+        const factor = 0.6 + out[idx] * 2.4; // maps output to wider range for non-scalping
+        baseTP = Math.max(0.2, Math.min(8.0, baseTP * factor));
+        baseSL = Math.max(0.1, Math.min(5.0, baseSL * factor));
+      }
+    } catch (e) {
+      // noop
+    }
+
+    return { targetTP: parseFloat(baseTP.toFixed(2)), targetSL: parseFloat(baseSL.toFixed(2)) };
+  }
+
 
   getUnifiedSignal(
     indicators: TechnicalIndicators,
@@ -930,11 +1049,14 @@ export class StrategyManager {
     genes?: MathGenes,
     gemmaSignal?: StrategySignal | null,
     hmmRegime?: string,
-    obiSignal?: OrderBookSignal | null
+    obiSignal?: OrderBookSignal | null,
+    scalpingMode: boolean = false
   ): StrategySignal {
     const oracle = this.getTemporalOracleSignal(indicators, [], priceHistory, genes);
     const statArb = this.getGridDcaSignal(indicators, hasActiveTrade, averageEntryPrice, priceHistory, genes);
     const kalmanHurst = this.getAiNeuralNetSignal(indicators, priceHistory, genes);
+    const scalpingMomentum = this.getScalpingMomentumSignal(indicators, priceHistory);
+    const microRange = this.getMicroRangeSignal(indicators, priceHistory);
     const kelly = this.getConservativeSignal(indicators, priceHistory, tradeStats, genes);
     const quant = this.getInstitutionalQuantSignal(indicators);
     const botHerd = this.getBotHerdSignal(indicators);
@@ -954,9 +1076,51 @@ export class StrategyManager {
       oracleWeight = 0.5; kalmanWeight = 0.5; statArbWeight = 1.5;
     }
 
-    const votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega, spectral, obFlow];
-    const weights = [oracleWeight, statArbWeight, kalmanWeight, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
-    const names = ['Oracle', 'StatArb', 'Kalman', 'Kelly', 'Quant', 'Herd', 'Omega', 'Spectral', 'OrderFlow'];
+    // Add Neural Net as an advisory voter (reduces bias from hand-tuned strategies)
+    try {
+      const emaRatioNN = indicators.ema.ema20 / (indicators.ema.ema50 || 1);
+      const bbRangeNN = Math.max(1e-8, indicators.bollinger.upper - indicators.bollinger.lower);
+      const bbPositionNN = Math.max(0, Math.min(1, (indicators.currentPrice - indicators.bollinger.lower) / bbRangeNN));
+      const nnNorm = CustomNeuralNetwork.normalizeIndicators(indicators.rsi, indicators.macd.hist, emaRatioNN, bbPositionNN, indicators.botActivity || 0);
+      const nnOut = this.neuralNet ? this.neuralNet.forward(nnNorm) : null;
+      if (nnOut) {
+        let nnAction: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+        const diff = Math.abs(nnOut[0] - nnOut[1]);
+        if (diff > 0.06) nnAction = nnOut[0] > nnOut[1] ? 'BUY' : 'SELL';
+        const nnVote: StrategySignal = { action: nnAction, confidence: Math.min(0.98, diff * 1.25), reason: 'NeuralCore' };
+        // Prepend neural vote so it participates in the unified voting
+        // We'll insert it into votes later when assembling the array to keep order consistent
+        // Use a small weight to avoid full bias takeover
+        // We'll push it into arrays below
+        // store temporary
+        (this as any)._nnVote = nnVote;
+      }
+    } catch (e) {
+      // ignore neural advisory failures
+    }
+
+    // If scalpingMode is active, elevate scalping-specific strategies and de-emphasize heavy DCA/grid strategies
+    let votes = [oracle, statArb, kalmanHurst, kelly, quant, botHerd, omega, spectral, obFlow];
+    let weights = [oracleWeight, statArbWeight, kalmanWeight, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+    let names = ['Oracle', 'StatArb', 'Kalman', 'Kelly', 'Quant', 'Herd', 'Omega', 'Spectral', 'OrderFlow'];
+
+    // Inject NeuralNet advisory vote if present
+    const nnVote = (this as any)._nnVote as StrategySignal | undefined;
+    if (nnVote) {
+      votes.unshift(nnVote);
+      names.unshift('NeuralCore');
+      weights.unshift(1.1); // modest influence
+      // clear temporary
+      delete (this as any)._nnVote;
+    }
+
+    if (scalpingMode) {
+      // push scalping voters with high priority
+      votes = [scalpingMomentum, microRange, ...votes];
+      names = ['ScalpMomentum', 'MicroRange', ...names];
+      // weights: prioritize scalp strategies strongly, de-emphasize heavy DCA/quant
+      weights = [2.0, 1.8, ...weights.map(w => w * 0.6)];
+    }
 
     votes.forEach((v, i) => {
       if (v.action !== 'HOLD') {
