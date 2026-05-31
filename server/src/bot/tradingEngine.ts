@@ -368,8 +368,8 @@ export class TradingEngine {
     this.log(`AI Core initialized. Bot STARTED using [${this.config.strategy}] strategy in ${this.config.mode} mode.`);
     this.saveState();
 
-    // Start interval loop (ticks every 3 seconds)
-    this.activeIntervalId = setInterval(() => this.tick(), 3000);
+    // Start interval loop (ticks every 1 second for scalping)
+    this.activeIntervalId = setInterval(() => this.tick(), 1000);
     this.triggerUpdate();
   }
 
@@ -428,6 +428,9 @@ export class TradingEngine {
         this.stats.dailyPnL = 0;
         this.stats.lastPnLReset = today;
       }
+
+      // Clean stale local trades that are not accumulated and not executing
+      await this.cleanStaleLocalTrades();
 
       // Circuit Breaker: Límite de pérdida diaria
       const maxDailyLoss = this.config.tradeSizeUSDT * 2.5;
@@ -566,7 +569,7 @@ export class TradingEngine {
       if (!trade.isBreakevenActive && pnlPercent >= 1.2) {
         trade.isBreakevenActive = true;
         trade.targetSL = -0.1; // Ponemos el SL un 0.1% arriba/abajo para cubrir fees
-        this.log(`🛡️ BREAKEVEN: Operación ${trade.id} protegida. SL movido al precio de entrada.`);
+        // Breakeven state changed (concise log)
       }
 
       // Lógica de Trailing Stop: Si el precio cae un X% desde su máximo alcanzado
@@ -586,7 +589,8 @@ export class TradingEngine {
         else if (isTrailingStopBreached) reason = `TRAILING STOP activado (Protegiendo ganancias en ${pnlPercent.toFixed(2)}%)`;
         else reason = `STOP LOSS fijo alcanzado (${pnlPercent.toFixed(2)}%)`;
 
-        this.log(`Automated execution: ${reason}`);
+        // concise terminal output for automated exit
+        this.log(`Automated exit executed for ${trade.id}.`);
         this.executeExit(trade, currentPrice, reason);
 
         // Send Telegram notification for automated exit
@@ -683,7 +687,7 @@ export class TradingEngine {
       const isFairPrice = indicators.currentPrice <= indicators.vwap * 1.005;
 
       if (isFairPrice) {
-        this.log(`AI Unified strategy generated BUY signal! Reason: ${signal.reason}`);
+        this.log('AI Unified strategy generated BUY signal.');
 
         // MEJORA: Si la señal no trae Stop Loss, usamos el ATR para un stop de volatilidad
         // Un stop basado en 2.5 * ATR es un estándar profesional para evitar "wicks".
@@ -705,13 +709,13 @@ export class TradingEngine {
       //   `*Reason:* ${signal.reason}`;
       // this.sendTelegramMessage(telegramMsg);
     } else if (signal.action === 'SELL' && hasActiveTrade) {
-      this.log(`AI Unified strategy generated SELL signal! Reason: ${signal.reason}`);
+      this.log('AI Unified strategy generated SELL signal.');
       for (const openTrade of openTrades) {
         await this.executeExit(openTrade, indicators.currentPrice, signal.reason);
       }
     } else if (signal.action === 'BUY' && hasActiveTrade) {
       // Allow safety orders/DCA buy signals if the unified signal suggests it (e.g. from voters)
-      this.log(`AI Unified strategy triggered DCA buy! Reason: ${signal.reason}`);
+      this.log('AI Unified strategy triggered DCA buy.');
       await this.executeEntry('BUY', indicators.currentPrice, `DCA Safety Order: ${signal.reason}`, signal.targetSL, signal.targetTP);
 
       // Send Telegram notification for DCA entry
@@ -747,7 +751,7 @@ export class TradingEngine {
         this.cachedGemmaSignal = gemmaSignal;
         this.lastGemmaFetchTime = Date.now();
         this.isGemmaFetching = false;
-        this.log(`🤖 [Gemma 4] Signal updated → ${gemmaSignal.action} (Confidence: ${(gemmaSignal.confidence * 100).toFixed(0)}%) | ${gemmaSignal.reason.substring(0, 200)}...`);
+        this.log(`🤖 [Gemma 4] Signal updated → ${gemmaSignal.action} (Confidence: ${(gemmaSignal.confidence * 100).toFixed(0)}%)`);
         this.triggerUpdate();
       }).catch((err) => {
         this.isGemmaFetching = false;
@@ -807,6 +811,10 @@ export class TradingEngine {
   private async executeEntry(side: 'BUY' | 'SELL', price: number, reason: string, targetSL?: number, targetTP?: number) {
     const symbol = 'DOGEUSDT';
 
+    // Defaults tuned for quick scalping: tight TP/SL when not provided
+    targetTP = targetTP ?? 0.35; // take profit default 0.35%
+    targetSL = targetSL ?? 0.25; // stop loss default 0.25%
+
     // 1. MEJORA: Risk-Based Position Sizing (ATR + SL)
     // Calculamos el tamaño basado en cuánto dinero estamos dispuestos a perder si toca el SL.
     const balance = this.stats.totalBalanceUSDT;
@@ -831,7 +839,7 @@ export class TradingEngine {
     quantity = Math.min(quantity, maxQuantityFromConfig);
 
     // Asegurar cantidad mínima para Binance
-    quantity = Math.max(quantity, 100); // Mínimo ~4-10 USDT en DOGE
+    quantity = Math.max(quantity, 10); // Mínimo reducido para scalping
 
     const amount = quantity * price;
 
@@ -908,7 +916,7 @@ export class TradingEngine {
   }
 
   private async executeExit(trade: Trade, price: number, reason: string) {
-    this.log(`Closing position vector ${trade.id} @ $${price.toFixed(5)}... Reason: ${reason}`);
+    this.log(`Exit executed: ${trade.id} @ $${price.toFixed(5)}`);
 
     if (this.binanceClient) {
       try {
@@ -1107,6 +1115,26 @@ export class TradingEngine {
       }
     } catch (e: any) {
       this.log(`Error syncing balances: ${e.message}`);
+    }
+  }
+
+  // Clean stale local OPEN trades that are likely not executing on the exchange
+  private async cleanStaleLocalTrades() {
+    try {
+      const now = Date.now();
+      const STALE_MS = 5 * 60 * 1000; // 5 minutes
+      const toClean = this.trades.filter(t => t.status === 'OPEN' && !(t.reason || '').includes('Accumulated') && (now - (t.timestamp || 0) > STALE_MS));
+      if (toClean.length === 0) return;
+
+      for (const t of toClean) {
+        t.status = 'CLOSED';
+        await TradeModel.findOneAndUpdate({ id: t.id }, { status: 'CLOSED' });
+      }
+
+      this.log(`Cleaned ${toClean.length} stale non-accumulated trade(s).`);
+      this.triggerUpdate();
+    } catch (e: any) {
+      // keep silent to avoid noisy logs
     }
   }
 
